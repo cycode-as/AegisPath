@@ -1,0 +1,86 @@
+{
+  "night": [
+    {
+      "id": "A",
+      "label": "Fastest",
+      "emoji": "⚡",
+      "duration": "18 min",
+      "distance": "6.2 km",
+      "isRecommended": false,
+      "zone": {
+        "crimeLevel": 65,
+        "crowdLevel": "isolated",
+        "infraLevel": "poor"
+      },
+      "timeHour": 21,
+      "factors": {
+        "crime": 65,
+        "time": 15,
+        "crowd": 25,
+        "infra": 20
+      }
+    },
+    {
+      "id": "B",
+      "label": "Safest",
+      "emoji": "✅",
+      "duration": "22 min",
+      "distance": "7.1 km",
+      "isRecommended": true,
+      "zone": {
+        "crimeLevel": 15,
+        "crowdLevel": "busy",
+        "infraLevel": "full"
+      },
+      "timeHour": 21,
+      "factors": {
+        "crime": 15,
+        "time": 15,
+        "crowd": 0,
+        "infra": 0
+      }
+    }
+  ],
+  "day": [
+    {
+      "id": "A",
+      "label": "Fastest",
+      "emoji": "⚡",
+      "duration": "18 min",
+      "distance": "6.2 km",
+      "isRecommended": false,
+      "zone": {
+        "crimeLevel": 65,
+        "crowdLevel": "isolated",
+        "infraLevel": "poor"
+      },
+      "timeHour": 14,
+      "factors": {
+        "crime": 65,
+        "time": 0,
+        "crowd": 25,
+        "infra": 20
+      }
+    },
+    {
+      "id": "B",
+      "label": "Safest",
+      "emoji": "✅",
+      "duration": "22 min",
+      "distance": "7.1 km",
+      "isRecommended": true,
+      "zone": {
+        "crimeLevel": 15,
+        "crowdLevel": "busy",
+        "infraLevel": "full"
+      },
+      "timeHour": 14,
+      "factors": {
+        "crime": 15,
+        "time": 0,
+        "crowd": 0,
+        "infra": 0
+      }
+    }
+  ]
+}
