@@ -3,6 +3,13 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import ScoreBar       from './ScoreBar';
 import ConfidencePill from './ConfidencePill';
 import { colors, getRiskColor } from '../config/colors';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  useDerivedValue,
+} from 'react-native-reanimated';
+import { useEffect } from 'react';
 
 export default function RouteCard({ route, onSeeWhy, onNavigate }) {
   const { label, emoji, duration, distance,
@@ -12,6 +19,16 @@ export default function RouteCard({ route, onSeeWhy, onNavigate }) {
   const scoreColor  = getRiskColor(riskLevel);
   const borderColor = isRecommended ? colors.brandBorder : colors.cardBorder;
   const elevation   = isRecommended ? 6 : 1;
+
+  // Score count-up animation: 0 → safetyScore over 400ms
+  const animScore = useSharedValue(0);
+  const displayScore = useDerivedValue(() => Math.floor(animScore.value));
+
+  useEffect(() => {
+    animScore.value = withTiming(safetyScore, { duration: 400 });
+  }, [safetyScore]);
+
+  const animScoreStyle = useAnimatedStyle(() => ({})); // style hook required for worklet
 
   return (
     <View style={[styles.card, { borderColor, elevation }]}>
@@ -28,7 +45,9 @@ export default function RouteCard({ route, onSeeWhy, onNavigate }) {
 
       {/* Score + meta */}
       <View style={styles.scoreRow}>
-        <Text style={[styles.score, { color: scoreColor }]}>{safetyScore}</Text>
+        <Animated.Text style={[styles.score, { color: scoreColor }]}>
+          {displayScore.value}
+        </Animated.Text>
         <View style={styles.meta}>
           <Text style={styles.riskLevel}>{riskLevel} RISK</Text>
           <Text style={styles.metaText}>{duration}  ·  {distance}</Text>

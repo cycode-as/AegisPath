@@ -7,6 +7,7 @@ export const useRouteStore = create((set, get) => ({
   timeMode:      'night',
   isLoading:     false,
   error:         null,
+  sosActive:     false,
 
   fetchRoutes: async () => {
     set({ isLoading: true, error: null });
@@ -29,4 +30,6 @@ export const useRouteStore = create((set, get) => ({
   },
 
   setSelectedRoute: (route) => set({ selectedRoute: route }),
+
+  setSosActive: (value) => set({ sosActive: value }),
 }));

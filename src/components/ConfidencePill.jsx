@@ -1,12 +1,12 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 
-export default function ConfidencePill({ icon, label, type }) {
+export default function ConfidencePill({ icon, label, type, testID }) {
   const bg   = type === 'safe' ? '#DCFCE7' : '#FEE2E2';
   const text = type === 'safe' ? '#15803D' : '#B91C1C';
 
   return (
-    <View style={[styles.pill, { backgroundColor: bg }]}>
+    <View testID={testID} style={[styles.pill, { backgroundColor: bg }]}>
       <Text style={[styles.text, { color: text }]}>
         {icon} {label}
       </Text>

@@ -3,9 +3,9 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import HomeScreen            from './src/screens/HomeScreen';
 import RouteComparisonScreen from './src/screens/RouteComparisonScreen';
-
-// Install navigation:
-// npx expo install @react-navigation/native @react-navigation/native-stack react-native-screens react-native-safe-area-context
+import SOSScreen             from './src/screens/SOSScreen';
+import NavigationScreen      from './src/screens/NavigationScreen';
+import IncidentReportScreen  from './src/screens/IncidentReportScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -15,6 +15,9 @@ export default function App() {
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         <Stack.Screen name="Home"            component={HomeScreen} />
         <Stack.Screen name="RouteComparison" component={RouteComparisonScreen} />
+        <Stack.Screen name="Navigation"      component={NavigationScreen} />
+        <Stack.Screen name="SOS"             component={SOSScreen} />
+        <Stack.Screen name="IncidentReport"  component={IncidentReportScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
