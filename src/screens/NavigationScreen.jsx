@@ -18,8 +18,8 @@ import {
   TouchableOpacity,
   StyleSheet,
   Modal,
-  SafeAreaView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import * as Haptics from 'expo-haptics';
 import SOSButton from '../components/SOSButton';
@@ -147,22 +147,27 @@ export default function NavigationScreen({ navigation }) {
     const interval = setInterval(() => {
       setDotIndex(prev => {
         const next = Math.min(prev + 1, ROUTE_COORDS.length - 1);
-        const [lat, lng] = ROUTE_COORDS[next];
-        webViewRef.current?.injectJavaScript(`
-          (function() {
-            var e = new MessageEvent('message', {
-              data: JSON.stringify({ type: 'UPDATE_DOT', lat: ${lat}, lng: ${lng} })
-            });
-            document.dispatchEvent(e);
-            window.dispatchEvent(e);
-          })();
-          true;
-        `);
         return next;
       });
     }, 800);
     return () => clearInterval(interval);
   }, []);
+
+  // Send updated dot position to WebView whenever dotIndex changes
+  useEffect(() => {
+    const [lat, lng] = ROUTE_COORDS[dotIndex];
+    const js = `
+      (function() {
+        var e = new MessageEvent('message', {
+          data: JSON.stringify({ type: 'UPDATE_DOT', lat: ${lat}, lng: ${lng} })
+        });
+        document.dispatchEvent(e);
+        window.dispatchEvent(e);
+      })();
+      true;
+    `;
+    webViewRef.current?.injectJavaScript(js);
+  }, [dotIndex]);
 
   // Zone alert fires after 5 seconds
   useEffect(() => {

@@ -28,15 +28,3 @@ export const getRoutes = (timeMode = 'night') => {
     }, 1200);
   });
 };
-
-export const triggerSOS = () => {
-  return new Promise((resolve) => {
-    setTimeout(() => resolve({ status: 'alert_sent' }), 1500);
-  });
-};
-
-export const submitReport = () => {
-  return new Promise((resolve) => {
-    setTimeout(() => resolve({ status: 'recorded' }), 800);
-  });
-};

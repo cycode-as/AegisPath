@@ -45,27 +45,33 @@ export default function SOSScreen({ navigation }) {
   const scale = useSharedValue(1);
   const outerScale = useSharedValue(1);
 
-  useEffect(() => {
+  const startFlow = () => {
+    setDone(false);
     sendSOS();
-
     scale.value = withRepeat(
       withSequence(
         withTiming(1.15, { duration: 700 }),
-        withTiming(1.0, { duration: 700 }),
-      ),
-      -1,
+        withTiming(1.0,  { duration: 700 }),
+      ), -1,
     );
     outerScale.value = withRepeat(
       withSequence(
         withTiming(1.35, { duration: 900 }),
-        withTiming(1.0, { duration: 900 }),
-      ),
-      -1,
+        withTiming(1.0,  { duration: 900 }),
+      ), -1,
     );
+  };
 
+  useEffect(() => {
+    startFlow();
     const timer = setTimeout(() => setDone(true), 1500);
     return () => clearTimeout(timer);
   }, []);
+
+  const handleRestart = () => {
+    startFlow();
+    setTimeout(() => setDone(true), 1500);
+  };
 
   const innerCircleStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -90,7 +96,7 @@ export default function SOSScreen({ navigation }) {
           <TouchableOpacity style={styles.navBtn} onPress={handleImSafe}>
             <Text style={styles.navBtnIcon}>←</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.restartBtn} onPress={handleImSafe}>
+          <TouchableOpacity style={styles.restartBtn} onPress={handleRestart}>
             <Text style={styles.restartText}>↺  Restart</Text>
           </TouchableOpacity>
         </View>

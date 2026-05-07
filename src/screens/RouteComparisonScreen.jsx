@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -150,20 +150,22 @@ export default function RouteComparisonScreen({ navigation }) {
   } = useRouteStore();
 
   const bottomSheetRef = useRef(null);
-  const [sheetOpen, setSheetOpen] = useState(false);
 
-  const doFetch = useCallback(() => { fetchRoutes(); }, [fetchRoutes]);
-  useEffect(() => { doFetch(); }, [timeMode]);
+  // Initial fetch only — setTimeMode handles re-fetches on toggle
+  useEffect(() => { fetchRoutes(); }, []);
 
   const handleSeeWhy = (route) => {
     setSelectedRoute(route);
-    setSheetOpen(true);
     bottomSheetRef.current?.snapToIndex(0);
   };
 
   const handleNavigate = (route) => {
     setSelectedRoute(route);
     navigation.navigate('Navigation');
+  };
+
+  const handleTimeImpact = (route) => {
+    navigation.navigate('TimeImpact', { route });
   };
 
   const sorted = [...routes].sort((a) => (a.isRecommended ? -1 : 1));
@@ -217,20 +219,10 @@ export default function RouteComparisonScreen({ navigation }) {
                   route={item}
                   onSeeWhy={handleSeeWhy}
                   onNavigate={handleNavigate}
+                  onTimeImpact={handleTimeImpact}
                 />
               </View>
             )}
-            ListFooterComponent={
-              sheetOpen ? (
-                <TouchableOpacity
-                  style={s.timeImpactBtn}
-                  activeOpacity={0.85}
-                  onPress={() => navigation.navigate('RouteComparison')}
-                >
-                  <Text style={s.timeImpactText}>Check Time Impact →</Text>
-                </TouchableOpacity>
-              ) : null
-            }
           />
         )}
       </SafeAreaView>
@@ -241,7 +233,6 @@ export default function RouteComparisonScreen({ navigation }) {
         snapPoints={['55%', '88%']}
         index={-1}
         enablePanDownToClose
-        onClose={() => setSheetOpen(false)}
         backgroundStyle={s.sheetBg}
         handleIndicatorStyle={s.handleIndicator}
       >
@@ -314,24 +305,6 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 4,
     paddingBottom: 110,
-  },
-  timeImpactBtn: {
-    backgroundColor: colors.brand,
-    borderRadius: 14,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginTop: 4,
-    marginBottom: 8,
-    shadowColor: colors.brand,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  timeImpactText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
   },
   sheetBg: {
     backgroundColor: '#FFFFFF',

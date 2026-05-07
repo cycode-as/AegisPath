@@ -7,6 +7,7 @@ import RouteComparisonScreen from './src/screens/RouteComparisonScreen';
 import SOSScreen             from './src/screens/SOSScreen';
 import NavigationScreen      from './src/screens/NavigationScreen';
 import IncidentReportScreen  from './src/screens/IncidentReportScreen';
+import TimeImpactScreen      from './src/screens/TimeImpactScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -20,6 +21,7 @@ export default function App() {
           <Stack.Screen name="Navigation"      component={NavigationScreen} />
           <Stack.Screen name="SOS"             component={SOSScreen} />
           <Stack.Screen name="IncidentReport"  component={IncidentReportScreen} />
+          <Stack.Screen name="TimeImpact"      component={TimeImpactScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>

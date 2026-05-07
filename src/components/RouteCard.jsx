@@ -4,7 +4,7 @@ import ScoreBar from './ScoreBar';
 import ConfidencePill from './ConfidencePill';
 import { colors, getRiskColor } from '../config/colors';
 
-export default function RouteCard({ route, onSeeWhy, onNavigate }) {
+export default function RouteCard({ route, onSeeWhy, onNavigate, onTimeImpact }) {
   const {
     label, emoji, duration, distance,
     safetyScore, riskLevel, narrative,
@@ -12,19 +12,16 @@ export default function RouteCard({ route, onSeeWhy, onNavigate }) {
   } = route;
 
   const scoreColor = getRiskColor(riskLevel);
-
-  // Count-up animation using JS state (reliable across all RN versions)
   const [displayScore, setDisplayScore] = useState(0);
 
   useEffect(() => {
     const steps = 20;
-    const duration = 500;
     let count = 0;
     const interval = setInterval(() => {
       count++;
       setDisplayScore(Math.min(Math.round((safetyScore / steps) * count), safetyScore));
       if (count >= steps) clearInterval(interval);
-    }, duration / steps);
+    }, 500 / steps);
     return () => clearInterval(interval);
   }, [safetyScore]);
 
@@ -38,56 +35,65 @@ export default function RouteCard({ route, onSeeWhy, onNavigate }) {
         </View>
       )}
 
-      {/* Top row */}
+      {/* Top row: icon + label + score */}
       <View style={styles.topRow}>
         <View style={[styles.iconWrap, isRecommended ? styles.iconSafe : styles.iconDefault]}>
           <Text style={styles.iconEmoji}>{emoji}</Text>
         </View>
-
         <View style={styles.routeInfo}>
           <Text style={styles.routeLabel} numberOfLines={1}>{label} Route</Text>
           <Text style={styles.metaText}>🕐 {duration}  ·  {distance}</Text>
         </View>
-
         <View style={styles.scoreBlock}>
           <Text style={styles.safetyLabel}>SAFETY</Text>
           <Text style={[styles.scoreNum, { color: scoreColor }]}>{displayScore}</Text>
         </View>
       </View>
 
-      {/* Score bar */}
+      {/* Animated score bar */}
       <ScoreBar safetyScore={safetyScore} riskLevel={riskLevel} />
 
-      {/* Narrative */}
+      {/* Narrative preview */}
       <Text style={styles.narrative} numberOfLines={2}>{narrative}</Text>
 
-      {/* Badges */}
+      {/* Confidence badges */}
       <View style={styles.badgeRow}>
         {badges.map((b, i) => (
           <ConfidencePill key={i} icon={b.icon} label={b.label} type={b.type} />
         ))}
       </View>
 
-      {/* Actions */}
-      <View style={styles.actions}>
+      {/* ── Action buttons — always visible, never disappear ── */}
+      <View style={styles.actionsRow}>
+        {/* View Risk Details */}
         <TouchableOpacity
-          style={styles.seeWhyBtn}
+          style={styles.riskBtn}
           onPress={() => onSeeWhy(route)}
           activeOpacity={0.75}
         >
-          <Text style={styles.seeWhyText}>View Risk Details →</Text>
+          <Text style={styles.riskBtnText} numberOfLines={1}>🔍 Risk Details</Text>
         </TouchableOpacity>
 
-        {isRecommended && (
-          <TouchableOpacity
-            style={styles.navBtn}
-            onPress={() => onNavigate(route)}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.navText}>Navigate →</Text>
-          </TouchableOpacity>
-        )}
+        {/* Check Time Impact */}
+        <TouchableOpacity
+          style={styles.timeBtn}
+          onPress={() => onTimeImpact && onTimeImpact(route)}
+          activeOpacity={0.75}
+        >
+          <Text style={styles.timeBtnText} numberOfLines={1}>🕐 Time Impact</Text>
+        </TouchableOpacity>
       </View>
+
+      {/* Navigate — full width below */}
+      <TouchableOpacity
+        style={[styles.navBtn, isRecommended ? styles.navBtnPrimary : styles.navBtnSecondary]}
+        onPress={() => onNavigate(route)}
+        activeOpacity={0.85}
+      >
+        <Text style={[styles.navBtnText, isRecommended ? styles.navBtnTextPrimary : styles.navBtnTextSecondary]} numberOfLines={1}>
+          Navigate This Route →
+        </Text>
+      </TouchableOpacity>
 
     </View>
   );
@@ -115,7 +121,6 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
 
-  /* Recommended tag */
   recTag: {
     alignSelf: 'flex-end',
     backgroundColor: '#22C55E',
@@ -131,7 +136,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
-  /* Top row */
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -151,7 +155,7 @@ const styles = StyleSheet.create({
 
   routeInfo: {
     flex: 1,
-    minWidth: 0, // prevents overflow
+    minWidth: 0,
   },
   routeLabel: {
     fontSize: 15,
@@ -180,7 +184,6 @@ const styles = StyleSheet.create({
     lineHeight: 34,
   },
 
-  /* Narrative */
   narrative: {
     fontSize: 13,
     color: '#64748B',
@@ -189,41 +192,71 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
 
-  /* Badges */
   badgeRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 4,
-    marginBottom: 12,
+    marginBottom: 14,
   },
 
-  /* Actions */
-  actions: {
+  /* ── Action buttons ── */
+  actionsRow: {
     flexDirection: 'row',
     gap: 8,
+    marginBottom: 8,
   },
-  seeWhyBtn: {
+
+  /* View Risk Details button */
+  riskBtn: {
     flex: 1,
-    backgroundColor: '#EEF2FF',
+    backgroundColor: '#FEE2E2',
     borderRadius: 10,
     paddingVertical: 11,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  seeWhyText: {
-    fontSize: 13,
+  riskBtnText: {
+    fontSize: 12,
     fontWeight: '700',
-    color: colors.brand,
+    color: '#B91C1C',
   },
+
+  /* Check Time Impact button */
+  timeBtn: {
+    flex: 1,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timeBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#92400E',
+  },
+
+  /* Navigate button — full width */
   navBtn: {
-    backgroundColor: colors.brand,
     borderRadius: 10,
-    paddingVertical: 11,
-    paddingHorizontal: 16,
+    paddingVertical: 13,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  navText: {
-    color: '#FFFFFF',
-    fontSize: 13,
+  navBtnPrimary: {
+    backgroundColor: colors.brand,
+  },
+  navBtnSecondary: {
+    backgroundColor: '#EEF2FF',
+  },
+  navBtnText: {
+    fontSize: 14,
     fontWeight: '700',
+  },
+  navBtnTextPrimary: {
+    color: '#FFFFFF',
+  },
+  navBtnTextSecondary: {
+    color: colors.brand,
   },
 });

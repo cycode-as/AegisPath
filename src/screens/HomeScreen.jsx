@@ -30,7 +30,7 @@ export default function HomeScreen({ navigation }) {
               <Text style={s.aiLabel}>AI</Text>
             </View>
           </View>
-          <TouchableOpacity style={s.bellBtn} activeOpacity={0.7}>
+          <TouchableOpacity style={s.bellBtn} activeOpacity={0.7} onPress={() => navigation.navigate('IncidentReport')}>
             <Text style={s.bellIcon}>🔔</Text>
           </TouchableOpacity>
         </View>
