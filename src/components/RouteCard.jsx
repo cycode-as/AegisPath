@@ -17,17 +17,14 @@ export default function RouteCard({ route, onSeeWhy, onNavigate }) {
   const [displayScore, setDisplayScore] = useState(0);
 
   useEffect(() => {
-    setDisplayScore(0);
     const steps = 20;
-    const increment = safetyScore / steps;
-    let current = 0;
+    const duration = 500;
     let count = 0;
     const interval = setInterval(() => {
       count++;
-      current = Math.min(Math.round(increment * count), safetyScore);
-      setDisplayScore(current);
+      setDisplayScore(Math.min(Math.round((safetyScore / steps) * count), safetyScore));
       if (count >= steps) clearInterval(interval);
-    }, 500 / steps);
+    }, duration / steps);
     return () => clearInterval(interval);
   }, [safetyScore]);
 

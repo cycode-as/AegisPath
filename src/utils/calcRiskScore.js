@@ -22,20 +22,3 @@ export const calcRiskScore = (zone, hour) => {
     timeFactor,
   };
 };
-
-// ─── PASTE THIS INTO BROWSER CONSOLE TO VERIFY ───────────────────
-// import { calcRiskScore } from './src/utils/calcRiskScore.js';
-//
-// const zoneA = { crimeLevel: 65, crowdLevel: 'isolated', infraLevel: 'poor' };
-// const zoneB = { crimeLevel: 15, crowdLevel: 'busy',     infraLevel: 'full' };
-//
-// console.log('Route A Night:', calcRiskScore(zoneA, 21));
-// console.log('Route A Day:',   calcRiskScore(zoneA, 14));
-// console.log('Route B Night:', calcRiskScore(zoneB, 21));
-// console.log('Route B Day:',   calcRiskScore(zoneB, 14));
-//
-// Expected output:
-// Route A Night: { riskScore: 57, safetyScore: 43, riskLevel: 'MODERATE' }
-// Route A Day:   { riskScore: 34, safetyScore: 66, riskLevel: 'LOW' }
-// Route B Night: { riskScore: 10, safetyScore: 90, riskLevel: 'LOW' }
-// Route B Day:   { riskScore: 6,  safetyScore: 94, riskLevel: 'LOW' }

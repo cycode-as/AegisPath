@@ -1,15 +1,14 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useState } from 'react';
 import {
   View,
   Text,
   FlatList,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   StatusBar,
-  Dimensions,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import Animated, {
@@ -28,8 +27,6 @@ import OfflineBanner from '../components/OfflineBanner';
 import { useRouteStore } from '../stores/useRouteStore';
 import { colors, getRiskColor } from '../config/colors';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
 const FACTORS = [
   { label: 'Crime', key: 'crime' },
   { label: 'Time',  key: 'time'  },
@@ -47,11 +44,11 @@ function RouteDetailSheet() {
   const op3 = useSharedValue(0);
   const opacities = [op0, op1, op2, op3];
 
-  const s0 = useAnimatedStyle(() => ({ opacity: op0.value }));
-  const s1 = useAnimatedStyle(() => ({ opacity: op1.value }));
-  const s2 = useAnimatedStyle(() => ({ opacity: op2.value }));
-  const s3 = useAnimatedStyle(() => ({ opacity: op3.value }));
-  const animStyles = [s0, s1, s2, s3];
+  const a0 = useAnimatedStyle(() => ({ opacity: op0.value }));
+  const a1 = useAnimatedStyle(() => ({ opacity: op1.value }));
+  const a2 = useAnimatedStyle(() => ({ opacity: op2.value }));
+  const a3 = useAnimatedStyle(() => ({ opacity: op3.value }));
+  const animStyles = [a0, a1, a2, a3];
 
   useEffect(() => {
     if (!selectedRoute) return;
@@ -63,7 +60,7 @@ function RouteDetailSheet() {
 
   if (!selectedRoute) return null;
 
-  const { label, safetyScore, riskLevel, factors } = selectedRoute;
+  const { label, riskLevel, factors } = selectedRoute;
   const detectedCount = FACTORS.filter(f => factors[f.key] >= 35).length;
 
   return (
@@ -71,7 +68,6 @@ function RouteDetailSheet() {
       <Text style={sheet.title}>Risk Analysis</Text>
       <Text style={sheet.sub}>Why this route may be unsafe</Text>
 
-      {/* Overall risk banner */}
       <View style={[sheet.riskBanner, { backgroundColor: getRiskColor(riskLevel) }]}>
         <Text style={sheet.riskBannerLabel}>OVERALL RISK</Text>
         <Text style={sheet.riskBannerTitle}>
@@ -82,7 +78,6 @@ function RouteDetailSheet() {
         </Text>
       </View>
 
-      {/* Factor bars */}
       <View style={sheet.factorsCard}>
         {FACTORS.map(({ label: fl, key }, i) => (
           <Animated.View key={key} style={animStyles[i]}>
@@ -90,10 +85,6 @@ function RouteDetailSheet() {
           </Animated.View>
         ))}
       </View>
-
-      <TouchableOpacity style={sheet.cta} activeOpacity={0.85}>
-        <Text style={sheet.ctaText}>Check Time Impact →</Text>
-      </TouchableOpacity>
     </BottomSheetScrollView>
   );
 }
@@ -102,7 +93,7 @@ const sheet = StyleSheet.create({
   content: {
     paddingHorizontal: 20,
     paddingTop: 8,
-    paddingBottom: 48,
+    paddingBottom: 32,
   },
   title: {
     fontSize: 20,
@@ -143,23 +134,11 @@ const sheet = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
-    marginBottom: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06,
     shadowRadius: 8,
     elevation: 2,
-  },
-  cta: {
-    backgroundColor: colors.brand,
-    borderRadius: 14,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  ctaText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
   },
 });
 
@@ -171,12 +150,14 @@ export default function RouteComparisonScreen({ navigation }) {
   } = useRouteStore();
 
   const bottomSheetRef = useRef(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const doFetch = useCallback(() => { fetchRoutes(); }, [fetchRoutes]);
   useEffect(() => { doFetch(); }, [timeMode]);
 
   const handleSeeWhy = (route) => {
     setSelectedRoute(route);
+    setSheetOpen(true);
     bottomSheetRef.current?.snapToIndex(0);
   };
 
@@ -190,7 +171,9 @@ export default function RouteComparisonScreen({ navigation }) {
   return (
     <GestureHandlerRootView style={s.root}>
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
-      <SafeAreaView style={s.safe}>
+
+      {/* SafeAreaView from react-native-safe-area-context fills correctly on Android */}
+      <SafeAreaView style={s.safe} edges={['top', 'left', 'right']}>
         <OfflineBanner />
 
         {/* ── Header ── */}
@@ -211,7 +194,7 @@ export default function RouteComparisonScreen({ navigation }) {
           <DayNightToggle timeMode={timeMode} onToggle={setTimeMode} />
         </View>
 
-        {/* ── Content ── */}
+        {/* ── Route list ── */}
         {isLoading ? (
           <ScrollView
             style={s.scroll}
@@ -237,6 +220,17 @@ export default function RouteComparisonScreen({ navigation }) {
                 />
               </View>
             )}
+            ListFooterComponent={
+              sheetOpen ? (
+                <TouchableOpacity
+                  style={s.timeImpactBtn}
+                  activeOpacity={0.85}
+                  onPress={() => navigation.navigate('RouteComparison')}
+                >
+                  <Text style={s.timeImpactText}>Check Time Impact →</Text>
+                </TouchableOpacity>
+              ) : null
+            }
           />
         )}
       </SafeAreaView>
@@ -247,6 +241,7 @@ export default function RouteComparisonScreen({ navigation }) {
         snapPoints={['55%', '88%']}
         index={-1}
         enablePanDownToClose
+        onClose={() => setSheetOpen(false)}
         backgroundStyle={s.sheetBg}
         handleIndicatorStyle={s.handleIndicator}
       >
@@ -318,7 +313,25 @@ const s = StyleSheet.create({
   listContent: {
     paddingHorizontal: 16,
     paddingTop: 4,
-    paddingBottom: 100, // room for SOS button
+    paddingBottom: 110,
+  },
+  timeImpactBtn: {
+    backgroundColor: colors.brand,
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginTop: 4,
+    marginBottom: 8,
+    shadowColor: colors.brand,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  timeImpactText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
   },
   sheetBg: {
     backgroundColor: '#FFFFFF',

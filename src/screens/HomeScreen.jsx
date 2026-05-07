@@ -1,9 +1,9 @@
 import React from 'react';
 import {
   View, Text, TextInput,
-  TouchableOpacity, StyleSheet,
-  SafeAreaView, StatusBar, ScrollView,
+  TouchableOpacity, StyleSheet, StatusBar, ScrollView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../config/colors';
 
 export default function HomeScreen({ navigation }) {

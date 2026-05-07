@@ -9,10 +9,10 @@ import { colors } from '../config/colors';
 
 // Factor icon map — matches the Risk Analysis screen in the design
 const FACTOR_META = {
-  Crime: { icon: '⚠️', subtitle: 'Reported incidents in last 30 days' },
-  Time:  { icon: '🌙', subtitle: 'Higher risk after sunset' },
-  Crowd: { icon: '👥', subtitle: 'Few pedestrians at this hour' },
-  Infra: { icon: '💡', subtitle: 'Streetlight coverage below average' },
+  Crime: { icon: '⚠️', displayLabel: 'High Crime Zone',     subtitle: 'Reported incidents in last 30 days' },
+  Time:  { icon: '🌙', displayLabel: 'Night-time Risk',     subtitle: 'Higher risk after sunset' },
+  Crowd: { icon: '👥', displayLabel: 'Low Crowd Density',   subtitle: 'Few pedestrians at this hour' },
+  Infra: { icon: '💡', displayLabel: 'Poor Lighting',       subtitle: 'Streetlight coverage below average' },
 };
 
 export function getFactorBarColor(value) {
@@ -33,7 +33,7 @@ export default function FactorBar({ label, value }) {
 
   const animatedFillStyle = useAnimatedStyle(() => ({ width: fillWidth.value }));
   const fillColor = getFactorBarColor(value);
-  const meta = FACTOR_META[label] || { icon: '📊', subtitle: '' };
+  const meta = FACTOR_META[label] || { icon: '📊', displayLabel: label, subtitle: '' };
 
   return (
     <View style={styles.container}>
@@ -43,7 +43,7 @@ export default function FactorBar({ label, value }) {
         </View>
         <View style={styles.textBlock}>
           <View style={styles.labelRow}>
-            <Text style={styles.label}>{label === 'Infra' ? 'Poor Lighting' : label === 'Crowd' ? 'Low Crowd Density' : label === 'Time' ? 'Night-time Risk' : 'High Crime Zone'}</Text>
+            <Text style={styles.label}>{meta.displayLabel}</Text>
             <Text style={[styles.percentage, { color: fillColor }]}>{value}%</Text>
           </View>
           <Text style={styles.subtitle}>{meta.subtitle}</Text>

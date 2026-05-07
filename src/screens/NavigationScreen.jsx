@@ -142,39 +142,27 @@ export default function NavigationScreen({ navigation }) {
   const currentZone = getZoneForIndex(dotIndex);
   const zoneColor   = getRiskColor(currentZone.riskLevel);
 
-  // Step dot along route every 800ms
+  // Step dot along route every 800ms and update WebView
   useEffect(() => {
     const interval = setInterval(() => {
-      setDotIndex(i => {
-        const next = Math.min(i + 1, ROUTE_COORDS.length - 1);
-        // Send updated position to WebView
+      setDotIndex(prev => {
+        const next = Math.min(prev + 1, ROUTE_COORDS.length - 1);
+        const [lat, lng] = ROUTE_COORDS[next];
         webViewRef.current?.injectJavaScript(`
           (function() {
             var e = new MessageEvent('message', {
-              data: JSON.stringify({ type: 'UPDATE_DOT', lat: ${JSON.stringify(ROUTE_COORDS)}[${0}][0], lng: ${JSON.stringify(ROUTE_COORDS)}[${0}][1] })
+              data: JSON.stringify({ type: 'UPDATE_DOT', lat: ${lat}, lng: ${lng} })
             });
             document.dispatchEvent(e);
+            window.dispatchEvent(e);
           })();
+          true;
         `);
         return next;
       });
     }, 800);
     return () => clearInterval(interval);
   }, []);
-
-  // Send dot position to WebView whenever dotIndex changes
-  useEffect(() => {
-    const [lat, lng] = ROUTE_COORDS[dotIndex];
-    webViewRef.current?.injectJavaScript(`
-      (function() {
-        var e = new MessageEvent('message', {
-          data: JSON.stringify({ type: 'UPDATE_DOT', lat: ${lat}, lng: ${lng} })
-        });
-        document.dispatchEvent(e);
-        window.dispatchEvent(e);
-      })();
-    `);
-  }, [dotIndex]);
 
   // Zone alert fires after 5 seconds
   useEffect(() => {
