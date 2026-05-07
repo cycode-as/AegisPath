@@ -1,10 +1,17 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, FlatList, StyleSheet,
-  SafeAreaView, ScrollView, TouchableOpacity,
+  View,
+  Text,
+  FlatList,
+  StyleSheet,
+  SafeAreaView,
+  ScrollView,
+  TouchableOpacity,
+  StatusBar,
+  Dimensions,
 } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import BottomSheet, { BottomSheetView } from '@gorhom/bottom-sheet';
+import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -12,19 +19,17 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import RouteCard      from '../components/RouteCard';
+import RouteCard from '../components/RouteCard';
 import DayNightToggle from '../components/DayNightToggle';
-import SkeletonCard   from '../components/SkeletonCard';
-import FactorBar      from '../components/FactorBar';
-import SOSButton      from '../components/SOSButton';
-import ConfidencePill from '../components/ConfidencePill';
-import OfflineBanner  from '../components/OfflineBanner';
+import SkeletonCard from '../components/SkeletonCard';
+import FactorBar from '../components/FactorBar';
+import SOSButton from '../components/SOSButton';
+import OfflineBanner from '../components/OfflineBanner';
 import { useRouteStore } from '../stores/useRouteStore';
 import { colors, getRiskColor } from '../config/colors';
 
-// ---------------------------------------------------------------------------
-// Factor order for the detail sheet
-// ---------------------------------------------------------------------------
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
 const FACTORS = [
   { label: 'Crime', key: 'crime' },
   { label: 'Time',  key: 'time'  },
@@ -32,114 +37,133 @@ const FACTORS = [
   { label: 'Infra', key: 'infra' },
 ];
 
-// ---------------------------------------------------------------------------
-// RouteDetailSheet — inline component that reads selectedRoute from the store
-// ---------------------------------------------------------------------------
+// ─── RouteDetailSheet ────────────────────────────────────────────────────────
 function RouteDetailSheet() {
   const selectedRoute = useRouteStore((s) => s.selectedRoute);
 
-  // One shared value per factor bar for the stagger opacity animation.
-  const opacities = [
-    useSharedValue(0),
-    useSharedValue(0),
-    useSharedValue(0),
-    useSharedValue(0),
-  ];
+  const op0 = useSharedValue(0);
+  const op1 = useSharedValue(0);
+  const op2 = useSharedValue(0);
+  const op3 = useSharedValue(0);
+  const opacities = [op0, op1, op2, op3];
 
-  // Animated styles derived from the shared values.
-  const animStyles = [
-    useAnimatedStyle(() => ({ opacity: opacities[0].value })),
-    useAnimatedStyle(() => ({ opacity: opacities[1].value })),
-    useAnimatedStyle(() => ({ opacity: opacities[2].value })),
-    useAnimatedStyle(() => ({ opacity: opacities[3].value })),
-  ];
+  const s0 = useAnimatedStyle(() => ({ opacity: op0.value }));
+  const s1 = useAnimatedStyle(() => ({ opacity: op1.value }));
+  const s2 = useAnimatedStyle(() => ({ opacity: op2.value }));
+  const s3 = useAnimatedStyle(() => ({ opacity: op3.value }));
+  const animStyles = [s0, s1, s2, s3];
 
-  // Replay stagger animation whenever selectedRoute changes.
   useEffect(() => {
     if (!selectedRoute) return;
     opacities.forEach((sv, i) => {
       sv.value = 0;
-      sv.value = withDelay(i * 100, withTiming(1, { duration: 400 }));
+      sv.value = withDelay(i * 120, withTiming(1, { duration: 400 }));
     });
   }, [selectedRoute]);
 
   if (!selectedRoute) return null;
 
-  const { label, emoji, safetyScore, riskLevel, badges, narrative, factors } = selectedRoute;
+  const { label, safetyScore, riskLevel, factors } = selectedRoute;
+  const detectedCount = FACTORS.filter(f => factors[f.key] >= 35).length;
 
   return (
-    <ScrollView contentContainerStyle={sheetStyles.content}>
-      {/* Route label */}
-      <Text style={sheetStyles.routeLabel}>
-        {emoji} {label.toUpperCase()}
-      </Text>
+    <BottomSheetScrollView contentContainerStyle={sheet.content}>
+      <Text style={sheet.title}>Risk Analysis</Text>
+      <Text style={sheet.sub}>Why this route may be unsafe</Text>
 
-      {/* Safety score */}
-      <Text style={[sheetStyles.safetyScore, { color: getRiskColor(riskLevel) }]}>
-        {safetyScore}
-      </Text>
+      {/* Overall risk banner */}
+      <View style={[sheet.riskBanner, { backgroundColor: getRiskColor(riskLevel) }]}>
+        <Text style={sheet.riskBannerLabel}>OVERALL RISK</Text>
+        <Text style={sheet.riskBannerTitle}>
+          {riskLevel} • {detectedCount} factor{detectedCount !== 1 ? 's' : ''} detected
+        </Text>
+        <Text style={sheet.riskBannerSub}>
+          Our AI scanned crime, lighting, crowd & temporal data along the {label.toLowerCase()} route.
+        </Text>
+      </View>
 
-      {/* Staggered factor bars */}
-      {FACTORS.map(({ label: factorLabel, key }, index) => (
-        <Animated.View key={key} style={animStyles[index]}>
-          <FactorBar label={factorLabel} value={factors[key]} />
-        </Animated.View>
-      ))}
-
-      {/* Confidence badges */}
-      <View style={sheetStyles.badgeRow}>
-        {badges.map((b, i) => (
-          <ConfidencePill
-            key={i}
-            testID="confidence-pill"
-            icon={b.icon}
-            label={b.label}
-            type={b.type}
-          />
+      {/* Factor bars */}
+      <View style={sheet.factorsCard}>
+        {FACTORS.map(({ label: fl, key }, i) => (
+          <Animated.View key={key} style={animStyles[i]}>
+            <FactorBar label={fl} value={factors[key]} />
+          </Animated.View>
         ))}
       </View>
 
-      {/* Full narrative — no numberOfLines cap */}
-      <Text style={sheetStyles.narrative}>{narrative}</Text>
-    </ScrollView>
+      <TouchableOpacity style={sheet.cta} activeOpacity={0.85}>
+        <Text style={sheet.ctaText}>Check Time Impact →</Text>
+      </TouchableOpacity>
+    </BottomSheetScrollView>
   );
 }
 
-const sheetStyles = StyleSheet.create({
+const sheet = StyleSheet.create({
   content: {
-    padding: 20,
-    paddingBottom: 40,
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 48,
   },
-  routeLabel: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  safetyScore: {
-    fontSize: 52,
+  title: {
+    fontSize: 20,
     fontWeight: '800',
-    lineHeight: 60,
+    color: '#0F172A',
+    marginBottom: 2,
+  },
+  sub: {
+    fontSize: 13,
+    color: '#64748B',
     marginBottom: 16,
   },
-  badgeRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: 12,
-    marginBottom: 8,
+  riskBanner: {
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
   },
-  narrative: {
+  riskBannerLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  riskBannerTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginBottom: 6,
+  },
+  riskBannerSub: {
     fontSize: 13,
-    color: colors.textSecondary,
-    lineHeight: 20,
-    marginTop: 8,
+    color: '#FFFFFF',
+    lineHeight: 18,
+    opacity: 0.95,
+  },
+  factorsCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  cta: {
+    backgroundColor: colors.brand,
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  ctaText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });
 
-// ---------------------------------------------------------------------------
-// RouteComparisonScreen
-// ---------------------------------------------------------------------------
+// ─── RouteComparisonScreen ────────────────────────────────────────────────────
 export default function RouteComparisonScreen({ navigation }) {
   const {
     routes, isLoading, timeMode,
@@ -148,9 +172,8 @@ export default function RouteComparisonScreen({ navigation }) {
 
   const bottomSheetRef = useRef(null);
 
-  useEffect(() => {
-    fetchRoutes();
-  }, [timeMode]);
+  const doFetch = useCallback(() => { fetchRoutes(); }, [fetchRoutes]);
+  useEffect(() => { doFetch(); }, [timeMode]);
 
   const handleSeeWhy = (route) => {
     setSelectedRoute(route);
@@ -162,36 +185,49 @@ export default function RouteComparisonScreen({ navigation }) {
     navigation.navigate('Navigation');
   };
 
-  return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <OfflineBanner />
-      <SafeAreaView style={styles.container}>
+  const sorted = [...routes].sort((a) => (a.isRecommended ? -1 : 1));
 
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.title}>Route Options</Text>
-          <View style={styles.headerRight}>
-            <TouchableOpacity
-              style={styles.reportBtn}
-              onPress={() => navigation.navigate('IncidentReport')}
-            >
-              <Text style={styles.reportBtnText}>⚠️ Report</Text>
-            </TouchableOpacity>
-            <DayNightToggle timeMode={timeMode} onToggle={setTimeMode} />
+  return (
+    <GestureHandlerRootView style={s.root}>
+      <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
+      <SafeAreaView style={s.safe}>
+        <OfflineBanner />
+
+        {/* ── Header ── */}
+        <View style={s.header}>
+          <TouchableOpacity
+            style={s.backBtn}
+            onPress={() => navigation.goBack()}
+            activeOpacity={0.7}
+          >
+            <Text style={s.backIcon}>←</Text>
+          </TouchableOpacity>
+
+          <View style={s.headerCenter}>
+            <Text style={s.title}>Route Comparison</Text>
+            <Text style={s.subtitle}>Fastest vs Safest</Text>
           </View>
+
+          <DayNightToggle timeMode={timeMode} onToggle={setTimeMode} />
         </View>
 
-        {/* Route cards or skeleton */}
+        {/* ── Content ── */}
         {isLoading ? (
-          <View style={styles.list}>
+          <ScrollView
+            style={s.scroll}
+            contentContainerStyle={s.listContent}
+            showsVerticalScrollIndicator={false}
+          >
             <View testID="skeleton-card"><SkeletonCard /></View>
             <View testID="skeleton-card"><SkeletonCard /></View>
-          </View>
+          </ScrollView>
         ) : (
           <FlatList
-            data={[...routes].sort((a) => a.isRecommended ? -1 : 1)}
+            style={s.scroll}
+            data={sorted}
             keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.list}
+            contentContainerStyle={s.listContent}
+            showsVerticalScrollIndicator={false}
             renderItem={({ item }) => (
               <View testID="route-card">
                 <RouteCard
@@ -203,23 +239,21 @@ export default function RouteComparisonScreen({ navigation }) {
             )}
           />
         )}
-
       </SafeAreaView>
 
-      {/* Bottom sheet — outside SafeAreaView so it overlays the full screen */}
+      {/* ── Bottom Sheet ── */}
       <BottomSheet
         ref={bottomSheetRef}
         snapPoints={['55%', '88%']}
         index={-1}
         enablePanDownToClose
-        handleComponent={() => <View style={styles.handle} />}
+        backgroundStyle={s.sheetBg}
+        handleIndicatorStyle={s.handleIndicator}
       >
-        <BottomSheetView>
-          <RouteDetailSheet />
-        </BottomSheetView>
+        <RouteDetailSheet />
       </BottomSheet>
 
-      {/* Floating SOS button */}
+      {/* ── SOS Button ── */}
       <SOSButton
         onLongPress={async () => {
           await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -230,49 +264,70 @@ export default function RouteComparisonScreen({ navigation }) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
+const s = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  safe: {
     flex: 1,
     backgroundColor: colors.background,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
-  },
-  headerRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    paddingVertical: 12,
     gap: 8,
   },
-  reportBtn: {
-    backgroundColor: '#FEF3C7',
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  reportBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#92400E',
+  backIcon: {
+    fontSize: 18,
+    color: '#0F172A',
+    lineHeight: 22,
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
   },
   title: {
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: '800',
-    color: colors.textPrimary,
+    color: '#0F172A',
   },
-  list: {
-    padding: 16,
+  subtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 1,
   },
-  handle: {
+  scroll: {
+    flex: 1,
+  },
+  listContent: {
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 100, // room for SOS button
+  },
+  sheetBg: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+  },
+  handleIndicator: {
+    backgroundColor: '#CBD5E1',
     width: 40,
     height: 4,
-    borderRadius: 2,
-    backgroundColor: '#CBD5E1',
-    alignSelf: 'center',
-    marginTop: 8,
   },
 });

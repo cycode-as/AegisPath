@@ -1,14 +1,29 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import { getRiskColor } from '../config/colors';
 
 export default function ScoreBar({ safetyScore, riskLevel }) {
   const barColor = getRiskColor(riskLevel);
-  const widthPercent = `${safetyScore}%`;
+  const fillWidth = useSharedValue(0);
+  const [trackWidth, setTrackWidth] = useState(0);
+
+  useEffect(() => {
+    if (trackWidth > 0) {
+      fillWidth.value = withTiming((safetyScore / 100) * trackWidth, {
+        duration: 600,
+      });
+    }
+  }, [trackWidth, safetyScore]);
+
+  const animStyle = useAnimatedStyle(() => ({ width: fillWidth.value }));
 
   return (
-    <View style={styles.track}>
-      <View style={[styles.fill, { width: widthPercent, backgroundColor: barColor }]} />
+    <View
+      style={styles.track}
+      onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
+    >
+      <Animated.View style={[styles.fill, animStyle, { backgroundColor: barColor }]} />
     </View>
   );
 }

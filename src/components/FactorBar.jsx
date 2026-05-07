@@ -7,64 +7,57 @@ import Animated, {
 } from 'react-native-reanimated';
 import { colors } from '../config/colors';
 
-/**
- * Returns the fill colour for a FactorBar based on the value.
- * value < 35  → colors.safe
- * value < 60  → colors.moderate
- * value >= 60 → colors.highRisk
- *
- * @param {number} value - integer 0–100
- * @returns {string} hex colour string
- */
+// Factor icon map — matches the Risk Analysis screen in the design
+const FACTOR_META = {
+  Crime: { icon: '⚠️', subtitle: 'Reported incidents in last 30 days' },
+  Time:  { icon: '🌙', subtitle: 'Higher risk after sunset' },
+  Crowd: { icon: '👥', subtitle: 'Few pedestrians at this hour' },
+  Infra: { icon: '💡', subtitle: 'Streetlight coverage below average' },
+};
+
 export function getFactorBarColor(value) {
   if (value < 35) return colors.safe;
   if (value < 60) return colors.moderate;
   return colors.highRisk;
 }
 
-/**
- * FactorBar — animated horizontal progress bar for a single safety factor.
- *
- * Props:
- *   label {string}  — display name (e.g. "Crime")
- *   value {number}  — integer 0–100
- */
 export default function FactorBar({ label, value }) {
   const fillWidth = useSharedValue(0);
   const [trackWidth, setTrackWidth] = useState(0);
 
-  // Once the track has been measured, animate the fill to the target width.
   useEffect(() => {
     if (trackWidth > 0) {
-      const targetWidth = (value / 100) * trackWidth;
-      fillWidth.value = withTiming(targetWidth, { duration: 600 });
+      fillWidth.value = withTiming((value / 100) * trackWidth, { duration: 600 });
     }
   }, [trackWidth, value]);
 
-  const animatedFillStyle = useAnimatedStyle(() => ({
-    width: fillWidth.value,
-  }));
-
+  const animatedFillStyle = useAnimatedStyle(() => ({ width: fillWidth.value }));
   const fillColor = getFactorBarColor(value);
+  const meta = FACTOR_META[label] || { icon: '📊', subtitle: '' };
 
   return (
     <View style={styles.container}>
-      {/* Label row */}
-      <View style={styles.labelRow}>
-        <Text style={styles.label}>{label}</Text>
-        <Text style={styles.percentage}>{value}%</Text>
-      </View>
-
-      {/* Track */}
-      <View
-        testID="factor-bar-track"
-        style={styles.track}
-        onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
-      >
-        <Animated.View
-          testID="factor-bar-fill"
-          style={[styles.fill, animatedFillStyle, { backgroundColor: fillColor }]}
-        />
+      <View style={styles.headerRow}>
+        <View style={[styles.iconWrap, { backgroundColor: fillColor + '22' }]}>
+          <Text style={styles.icon}>{meta.icon}</Text>
+        </View>
+        <View style={styles.textBlock}>
+          <View style={styles.labelRow}>
+            <Text style={styles.label}>{label === 'Infra' ? 'Poor Lighting' : label === 'Crowd' ? 'Low Crowd Density' : label === 'Time' ? 'Night-time Risk' : 'High Crime Zone'}</Text>
+            <Text style={[styles.percentage, { color: fillColor }]}>{value}%</Text>
+          </View>
+          <Text style={styles.subtitle}>{meta.subtitle}</Text>
+          <View
+            testID="factor-bar-track"
+            style={styles.track}
+            onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
+          >
+            <Animated.View
+              testID="factor-bar-fill"
+              style={[styles.fill, animatedFillStyle, { backgroundColor: fillColor }]}
+            />
+          </View>
+        </View>
       </View>
     </View>
   );
@@ -72,21 +65,42 @@ export default function FactorBar({ label, value }) {
 
 const styles = StyleSheet.create({
   container: {
-    marginVertical: 6,
+    marginVertical: 8,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  iconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  icon: { fontSize: 18 },
+  textBlock: { flex: 1 },
   labelRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 4,
+    alignItems: 'center',
+    marginBottom: 2,
   },
   label: {
-    fontSize: 13,
-    color: colors.textPrimary,
-    fontWeight: '500',
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
   },
   percentage: {
-    fontSize: 13,
-    color: colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  subtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 6,
   },
   track: {
     height: 8,

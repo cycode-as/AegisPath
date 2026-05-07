@@ -1,63 +1,67 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import ScoreBar       from './ScoreBar';
+import ScoreBar from './ScoreBar';
 import ConfidencePill from './ConfidencePill';
 import { colors, getRiskColor } from '../config/colors';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  useDerivedValue,
-} from 'react-native-reanimated';
-import { useEffect } from 'react';
 
 export default function RouteCard({ route, onSeeWhy, onNavigate }) {
-  const { label, emoji, duration, distance,
-          safetyScore, riskLevel, narrative,
-          badges, isRecommended } = route;
+  const {
+    label, emoji, duration, distance,
+    safetyScore, riskLevel, narrative,
+    badges, isRecommended,
+  } = route;
 
-  const scoreColor  = getRiskColor(riskLevel);
-  const borderColor = isRecommended ? colors.brandBorder : colors.cardBorder;
-  const elevation   = isRecommended ? 6 : 1;
+  const scoreColor = getRiskColor(riskLevel);
 
-  // Score count-up animation: 0 → safetyScore over 400ms
-  const animScore = useSharedValue(0);
-  const displayScore = useDerivedValue(() => Math.floor(animScore.value));
+  // Count-up animation using JS state (reliable across all RN versions)
+  const [displayScore, setDisplayScore] = useState(0);
 
   useEffect(() => {
-    animScore.value = withTiming(safetyScore, { duration: 400 });
+    setDisplayScore(0);
+    const steps = 20;
+    const increment = safetyScore / steps;
+    let current = 0;
+    let count = 0;
+    const interval = setInterval(() => {
+      count++;
+      current = Math.min(Math.round(increment * count), safetyScore);
+      setDisplayScore(current);
+      if (count >= steps) clearInterval(interval);
+    }, 500 / steps);
+    return () => clearInterval(interval);
   }, [safetyScore]);
 
-  const animScoreStyle = useAnimatedStyle(() => ({})); // style hook required for worklet
-
   return (
-    <View style={[styles.card, { borderColor, elevation }]}>
+    <View style={[styles.card, isRecommended && styles.cardRecommended]}>
 
-      {/* Header row */}
-      <View style={styles.headerRow}>
-        <Text style={styles.label}>{emoji} {label.toUpperCase()}</Text>
-        {isRecommended && (
-          <View style={styles.recommendedBadge}>
-            <Text style={styles.recommendedText}>RECOMMENDED</Text>
-          </View>
-        )}
-      </View>
+      {/* Recommended tag */}
+      {isRecommended && (
+        <View style={styles.recTag}>
+          <Text style={styles.recTagText}>✓ RECOMMENDED</Text>
+        </View>
+      )}
 
-      {/* Score + meta */}
-      <View style={styles.scoreRow}>
-        <Animated.Text style={[styles.score, { color: scoreColor }]}>
-          {displayScore.value}
-        </Animated.Text>
-        <View style={styles.meta}>
-          <Text style={styles.riskLevel}>{riskLevel} RISK</Text>
-          <Text style={styles.metaText}>{duration}  ·  {distance}</Text>
+      {/* Top row */}
+      <View style={styles.topRow}>
+        <View style={[styles.iconWrap, isRecommended ? styles.iconSafe : styles.iconDefault]}>
+          <Text style={styles.iconEmoji}>{emoji}</Text>
+        </View>
+
+        <View style={styles.routeInfo}>
+          <Text style={styles.routeLabel} numberOfLines={1}>{label} Route</Text>
+          <Text style={styles.metaText}>🕐 {duration}  ·  {distance}</Text>
+        </View>
+
+        <View style={styles.scoreBlock}>
+          <Text style={styles.safetyLabel}>SAFETY</Text>
+          <Text style={[styles.scoreNum, { color: scoreColor }]}>{displayScore}</Text>
         </View>
       </View>
 
       {/* Score bar */}
       <ScoreBar safetyScore={safetyScore} riskLevel={riskLevel} />
 
-      {/* Narrative preview */}
+      {/* Narrative */}
       <Text style={styles.narrative} numberOfLines={2}>{narrative}</Text>
 
       {/* Badges */}
@@ -68,15 +72,25 @@ export default function RouteCard({ route, onSeeWhy, onNavigate }) {
       </View>
 
       {/* Actions */}
-      <TouchableOpacity style={styles.seeWhyBtn} onPress={() => onSeeWhy(route)}>
-        <Text style={styles.seeWhyText}>See Why →</Text>
-      </TouchableOpacity>
-
-      {isRecommended && (
-        <TouchableOpacity style={styles.navigateBtn} onPress={() => onNavigate(route)}>
-          <Text style={styles.navigateText}>Navigate This Route →</Text>
+      <View style={styles.actions}>
+        <TouchableOpacity
+          style={styles.seeWhyBtn}
+          onPress={() => onSeeWhy(route)}
+          activeOpacity={0.75}
+        >
+          <Text style={styles.seeWhyText}>View Risk Details →</Text>
         </TouchableOpacity>
-      )}
+
+        {isRecommended && (
+          <TouchableOpacity
+            style={styles.navBtn}
+            onPress={() => onNavigate(route)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.navText}>Navigate →</Text>
+          </TouchableOpacity>
+        )}
+      </View>
 
     </View>
   );
@@ -84,87 +98,135 @@ export default function RouteCard({ route, onSeeWhy, onNavigate }) {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    borderWidth: 1.5,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
     padding: 16,
     marginBottom: 14,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
   },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
+  cardRecommended: {
+    borderColor: '#22C55E',
+    backgroundColor: '#FAFFFE',
+    shadowColor: '#22C55E',
+    shadowOpacity: 0.15,
+    elevation: 4,
   },
-  label: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    letterSpacing: 0.5,
-  },
-  recommendedBadge: {
-    backgroundColor: '#EEF2FF',
+
+  /* Recommended tag */
+  recTag: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#22C55E',
     borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  recommendedText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: colors.brand,
-  },
-  scoreRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  score: {
-    fontSize: 52,
-    fontWeight: '800',
-    lineHeight: 56,
-  },
-  meta: {
-    flex: 1,
-  },
-  riskLevel: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  metaText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  narrative: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    lineHeight: 18,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     marginBottom: 10,
   },
+  recTagText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+
+  /* Top row */
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  iconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  iconSafe:    { backgroundColor: '#DCFCE7' },
+  iconDefault: { backgroundColor: '#EEF2FF' },
+  iconEmoji:   { fontSize: 22 },
+
+  routeInfo: {
+    flex: 1,
+    minWidth: 0, // prevents overflow
+  },
+  routeLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 3,
+  },
+  metaText: {
+    fontSize: 12,
+    color: '#64748B',
+  },
+
+  scoreBlock: {
+    alignItems: 'flex-end',
+    flexShrink: 0,
+  },
+  safetyLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+    letterSpacing: 0.5,
+  },
+  scoreNum: {
+    fontSize: 30,
+    fontWeight: '800',
+    lineHeight: 34,
+  },
+
+  /* Narrative */
+  narrative: {
+    fontSize: 13,
+    color: '#64748B',
+    lineHeight: 18,
+    marginTop: 4,
+    marginBottom: 10,
+  },
+
+  /* Badges */
   badgeRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginBottom: 10,
+    gap: 4,
+    marginBottom: 12,
+  },
+
+  /* Actions */
+  actions: {
+    flexDirection: 'row',
+    gap: 8,
   },
   seeWhyBtn: {
-    paddingVertical: 6,
+    flex: 1,
+    backgroundColor: '#EEF2FF',
+    borderRadius: 10,
+    paddingVertical: 11,
+    alignItems: 'center',
   },
   seeWhyText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
     color: colors.brand,
   },
-  navigateBtn: {
+  navBtn: {
     backgroundColor: colors.brand,
-    borderRadius: 12,
-    paddingVertical: 13,
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
     alignItems: 'center',
-    marginTop: 8,
   },
-  navigateText: {
+  navText: {
     color: '#FFFFFF',
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '700',
   },
 });

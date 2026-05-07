@@ -23,41 +23,27 @@ export default function DayNightToggle({ timeMode, onToggle }) {
 
   const handleContainerLayout = (e) => {
     const containerWidth = e.nativeEvent.layout.width;
-    // Each pill takes half the container width (two equal pills)
-    const computedPillWidth = containerWidth / 2;
-    if (computedPillWidth !== pillWidth) {
-      setPillWidth(computedPillWidth);
-    }
+    const computed = containerWidth / 2;
+    if (computed !== pillWidth) setPillWidth(computed);
   };
 
   return (
     <View style={styles.container} onLayout={handleContainerLayout}>
-      {/* Sliding animated indicator — absolutely positioned behind the text pills */}
       {pillWidth > 0 && (
         <Animated.View
           style={[
-            styles.pill,
-            styles.active,
             styles.indicator,
             { width: pillWidth },
             animatedIndicatorStyle,
           ]}
         />
       )}
-
-      <TouchableOpacity
-        style={styles.pill}
-        onPress={() => onToggle('day')}
-      >
+      <TouchableOpacity style={styles.pill} onPress={() => onToggle('day')}>
         <Text style={[styles.text, timeMode === 'day' && styles.activeText]}>
           🌤 Day
         </Text>
       </TouchableOpacity>
-
-      <TouchableOpacity
-        style={styles.pill}
-        onPress={() => onToggle('night')}
-      >
+      <TouchableOpacity style={styles.pill} onPress={() => onToggle('night')}>
         <Text style={[styles.text, timeMode === 'night' && styles.activeText]}>
           🌙 Night
         </Text>
@@ -69,14 +55,15 @@ export default function DayNightToggle({ timeMode, onToggle }) {
 const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#E8EDFF',
     borderRadius: 999,
     padding: 3,
+    width: 140, // fixed so it never overflows the header
   },
   pill: {
     flex: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
@@ -86,21 +73,16 @@ const styles = StyleSheet.create({
     top: 3,
     left: 3,
     bottom: 3,
-  },
-  active: {
-    backgroundColor: colors.surface,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    elevation: 2,
+    borderRadius: 999,
+    backgroundColor: colors.brand,
   },
   text: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.brand,
   },
   activeText: {
-    color: colors.textPrimary,
+    color: '#FFFFFF',
     fontWeight: '700',
   },
 });
