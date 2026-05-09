@@ -5,7 +5,7 @@ import { calcRiskScore } from '../utils/calcRiskScore';
 
 const enrichRoute = (route, timeMode) => {
   const timeHour = timeMode === 'night' ? 21 : 14;
-  const { riskScore, safetyScore, riskLevel } = calcRiskScore(route.zone, timeHour);
+  const { riskScore, safetyScore, riskLevel, factors } = calcRiskScore(route.zone, timeHour);
   const routeKey = route.id === 'A' ? 'routeA' : 'routeB';
 
   return {
@@ -14,6 +14,7 @@ const enrichRoute = (route, timeMode) => {
     safetyScore,
     riskScore,
     riskLevel,
+    factors,
     narrative: narratives[routeKey][timeMode],
     badges:    badges[routeKey][timeMode],
   };

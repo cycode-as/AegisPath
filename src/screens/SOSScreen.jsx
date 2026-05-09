@@ -1,422 +1,598 @@
+/**
+ * SOSScreen — Cinematic emergency flow.
+ *
+ * Phase 0: 3-second countdown (3… 2… 1…)
+ * Phase 1: "Sending alert…"           (1.2s)
+ * Phase 2: "Alerting trusted contacts…" (1.4s)
+ * Phase 3: "Nearest authorities notified" (1.4s)
+ * Phase 4: "Live tracking activated"   (1.2s)
+ * Done:    Confirmation screen
+ */
+
 import React, { useState, useEffect } from 'react';
-import {
-  View, Text, TouchableOpacity, StyleSheet, StatusBar,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, Text, TouchableOpacity, StyleSheet, StatusBar } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withRepeat,
   withSequence,
   withTiming,
+  withDelay,
+  Easing,
 } from 'react-native-reanimated';
-import { colors } from '../config/colors';
-import { sendSOS } from '../services/sendSOS';
+import { sendSOS, callFirstContact, getEmergencyContacts } from '../services/sendSOS';
 import { useRouteStore } from '../stores/useRouteStore';
 
-const STATUS_ITEMS = [
+// ─── Phase definitions ────────────────────────────────────────────────────────
+const PHASES = [
   {
-    icon: '📍',
-    iconBg: '#DCFCE7',
-    title: 'Location shared',
-    sub: '28.5494° N, 77.2001° E',
-    done: true,
+    id:      'contacts',
+    icon:    '👥',
+    title:   'Alerting trusted contacts…',
+    sub:     'Mom • Priya • Dad',
+    delay:   0,
   },
   {
-    icon: '💬',
-    iconBg: '#DCFCE7',
-    title: 'Notifying emergency contacts',
-    sub: 'Mom • Priya • Dad',
-    done: true,
+    id:      'authorities',
+    icon:    '🚔',
+    title:   'Nearest authorities notified',
+    sub:     'Police PCR • 0.8 km away',
+    delay:   1200,
   },
   {
-    icon: '📞',
-    iconBg: '#FEF3C7',
-    title: 'Connecting to nearest unit',
-    sub: 'Police PCR • 0.8 km away',
-    done: false,
+    id:      'tracking',
+    icon:    '📍',
+    title:   'Live tracking activated',
+    sub:     '28.5494° N, 77.2001° E',
+    delay:   2600,
   },
 ];
 
-export default function SOSScreen({ navigation }) {
-  const [done, setDone] = useState(false);
-  const setSosActive = useRouteStore((state) => state.setSosActive);
-
-  const scale = useSharedValue(1);
-  const outerScale = useSharedValue(1);
-
-  const startFlow = () => {
-    setDone(false);
-    sendSOS();
-    scale.value = withRepeat(
-      withSequence(
-        withTiming(1.15, { duration: 700 }),
-        withTiming(1.0,  { duration: 700 }),
-      ), -1,
-    );
-    outerScale.value = withRepeat(
-      withSequence(
-        withTiming(1.35, { duration: 900 }),
-        withTiming(1.0,  { duration: 900 }),
-      ), -1,
-    );
-  };
+// ─── Animated ring component ──────────────────────────────────────────────────
+function PulseRing({ delay = 0 }) {
+  const scale   = useSharedValue(1);
+  const opacity = useSharedValue(0.6);
 
   useEffect(() => {
-    startFlow();
-    const timer = setTimeout(() => setDone(true), 1500);
-    return () => clearTimeout(timer);
+    scale.value = withDelay(delay, withRepeat(
+      withSequence(
+        withTiming(2.2, { duration: 1600, easing: Easing.out(Easing.ease) }),
+        withTiming(1,   { duration: 0 }),
+      ), -1,
+    ));
+    opacity.value = withDelay(delay, withRepeat(
+      withSequence(
+        withTiming(0, { duration: 1600, easing: Easing.out(Easing.ease) }),
+        withTiming(0.5, { duration: 0 }),
+      ), -1,
+    ));
   }, []);
 
-  const handleRestart = () => {
-    startFlow();
-    setTimeout(() => setDone(true), 1500);
-  };
-
-  const innerCircleStyle = useAnimatedStyle(() => ({
+  const style = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
+    opacity: opacity.value,
   }));
-  const outerCircleStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: outerScale.value }],
-    opacity: 0.25,
+
+  return <Animated.View style={[styles.ring, style]} />;
+}
+
+// ─── Single status row ────────────────────────────────────────────────────────
+function StatusRow({ icon, title, sub, visible, done }) {
+  const opacity = useSharedValue(0);
+  const translateY = useSharedValue(12);
+
+  useEffect(() => {
+    if (visible) {
+      opacity.value = withTiming(1, { duration: 400 });
+      translateY.value = withTiming(0, { duration: 400 });
+    }
+  }, [visible]);
+
+  const style = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ translateY: translateY.value }],
   }));
+
+  return (
+    <Animated.View style={[styles.statusRow, style]}>
+      <View style={styles.statusIconWrap}>
+        <Text style={styles.statusIcon}>{icon}</Text>
+      </View>
+      <View style={styles.statusTextWrap}>
+        <Text style={styles.statusTitle}>{title}</Text>
+        <Text style={styles.statusSub}>{sub}</Text>
+      </View>
+      {done && (
+        <View style={styles.checkWrap}>
+          <Text style={styles.checkText}>✓</Text>
+        </View>
+      )}
+    </Animated.View>
+  );
+}
+
+// ─── SOSScreen ────────────────────────────────────────────────────────────────
+export default function SOSScreen({ navigation }) {
+  const [countdown, setCountdown]         = useState(3);
+  const [phasesDone, setPhasesDone]       = useState([]);
+  const [allDone, setAllDone]             = useState(false);
+  const [safeConfirmed, setSafeConfirmed] = useState(false);
+  const [contacts, setContacts]           = useState([]);
+  const setSosActive = useRouteStore((s) => s.setSosActive);
+
+  // Load stored emergency contacts on mount
+  useEffect(() => {
+    getEmergencyContacts().then(setContacts);
+  }, []);
+
+  // Build contact names string for display
+  const contactNames = contacts.length > 0
+    ? contacts.map(c => c.name).join(' • ')
+    : 'Emergency contacts';
+
+  const firstContactName = contacts[0]?.name ?? 'Emergency contact';
+
+  // Pulse animation for the main circle
+  const circleScale = useSharedValue(1);
+  useEffect(() => {
+    circleScale.value = withRepeat(
+      withSequence(
+        withTiming(1.1, { duration: 800 }),
+        withTiming(1.0, { duration: 800 }),
+      ), -1,
+    );
+  }, []);
+  const circleStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: circleScale.value }],
+  }));
+
+  // Countdown: 3 → 2 → 1 → start flow
+  useEffect(() => {
+    const t1 = setTimeout(() => setCountdown(2), 1000);
+    const t2 = setTimeout(() => setCountdown(1), 2000);
+    const t3 = setTimeout(() => {
+      setCountdown(null);
+      // Send SMS to all stored contacts
+      sendSOS();
+      // Call the first contact immediately
+      callFirstContact();
+      // Reveal phases sequentially
+      PHASES.forEach((p) => {
+        setTimeout(() => {
+          setPhasesDone(prev => [...prev, p.id]);
+        }, p.delay);
+      });
+      // Done after all phases
+      setTimeout(() => setAllDone(true), 4400);
+    }, 3000);
+    return () => [t1, t2, t3].forEach(clearTimeout);
+  }, []);
 
   const handleImSafe = () => {
+    setSafeConfirmed(true);
     setSosActive(false);
-    navigation.navigate('Home');
+    // Brief emotional closure, then navigate home
+    setTimeout(() => navigation.navigate('Home'), 2200);
   };
 
-  if (!done) {
+  // ── Emotional closure — "Glad you're safe" ─────────────────────────────────
+  if (safeConfirmed) {
     return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="dark-content" backgroundColor="#FFF5F5" />
+      <View style={styles.closureContainer}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F0FFF4" />
+        <Text style={styles.closureEmoji}>🌿</Text>
+        <Text style={styles.closureTitle}>Glad you're safe.</Text>
+        <Text style={styles.closureSub}>
+          Live tracking ended.{'\n'}Your contacts have been updated.{'\n'}Emergency session closed.
+        </Text>
+        <View style={styles.closureRows}>
+          {['Live tracking ended', 'Contacts updated', 'Emergency session closed'].map((item, i) => (
+            <View key={i} style={styles.closureRow}>
+              <Text style={styles.closureCheck}>✓</Text>
+              <Text style={styles.closureRowText}>{item}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  }
 
-        {/* Top nav */}
-        <View style={styles.topNav}>
-          <TouchableOpacity style={styles.navBtn} onPress={handleImSafe}>
-            <Text style={styles.navBtnIcon}>←</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.restartBtn} onPress={handleRestart}>
-            <Text style={styles.restartText}>↺  Restart</Text>
-          </TouchableOpacity>
+  // ── Done state ──────────────────────────────────────────────────────────────
+  if (allDone) {
+    return (
+      <View style={styles.doneContainer}>
+        <StatusBar barStyle="light-content" backgroundColor="#7F1D1D" />
+
+        <View style={styles.doneCheckCircle}>
+          <Text style={styles.doneCheckText}>✓</Text>
         </View>
 
-        {/* Pulsing icon area */}
-        <View style={styles.pulseArea}>
-          <Animated.View style={[styles.outerRing, outerCircleStyle]} />
-          <Animated.View style={[styles.innerCircle, innerCircleStyle]}>
-            <Text style={styles.alarmEmoji}>🚨</Text>
-          </Animated.View>
-        </View>
-
-        {/* Title */}
-        <Text style={styles.alertTitle}>Emergency Alert Activated</Text>
-        <Text style={styles.alertSub}>
-          Help is on the way. Stay calm and stay{'\n'}where you are if safe.
+        <Text style={styles.doneTitle}>Alert Sent</Text>
+        <Text style={styles.doneSub}>
+          Your contacts have been notified.{'\n'}Help is on the way.
         </Text>
 
-        {/* Status list */}
-        <View style={styles.statusCard}>
-          {STATUS_ITEMS.map((item, i) => (
-            <View key={i} style={[styles.statusRow, i < STATUS_ITEMS.length - 1 && styles.statusRowBorder]}>
-              <View style={[styles.statusIcon, { backgroundColor: item.iconBg }]}>
-                <Text style={styles.statusEmoji}>{item.icon}</Text>
-              </View>
-              <View style={styles.statusText}>
-                <Text style={styles.statusTitle}>{item.title}</Text>
-                <Text style={styles.statusSub}>{item.sub}</Text>
-              </View>
-              {item.done ? (
-                <View style={styles.checkCircle}>
-                  <Text style={styles.checkMark}>✓</Text>
-                </View>
-              ) : (
-                <View style={styles.spinnerCircle}>
-                  <Text style={styles.spinnerDot}>◌</Text>
-                </View>
-              )}
+        {/* Confirmed actions */}
+        <View style={styles.doneList}>
+          {PHASES.map((p) => (
+            <View key={p.id} style={styles.doneRow}>
+              <Text style={styles.doneRowCheck}>✓</Text>
+              <Text style={styles.doneRowText}>{p.title.replace('…', '')}</Text>
             </View>
           ))}
         </View>
 
-        {/* Incoming call banner */}
-        <View style={styles.callBanner}>
-          <View style={styles.callIconWrap}>
-            <Text style={styles.callIcon}>📞</Text>
-          </View>
-          <View style={styles.callText}>
-            <Text style={styles.callLabel}>INCOMING CALL</Text>
-            <Text style={styles.callTitle}>Police Assistance • 112</Text>
-          </View>
-          <View style={styles.callDot} />
-        </View>
-
-        {/* CTA */}
-        <TouchableOpacity style={styles.emergencyBtn} activeOpacity={0.85}>
-          <Text style={styles.emergencyBtnText}>📞  Call Emergency Services</Text>
-        </TouchableOpacity>
-
-      </SafeAreaView>
-    );
-  }
-
-  // Done state
-  return (
-    <SafeAreaView style={styles.doneContainer}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F0FFF4" />
-      <View style={styles.doneInner}>
-        <View style={styles.doneCheckWrap}>
-          <Text style={styles.doneCheck}>✓</Text>
-        </View>
-        <Text style={styles.doneTitle}>Alert Sent.</Text>
-        <Text style={styles.doneSub}>Your contacts have been notified</Text>
         <TouchableOpacity style={styles.safeBtn} onPress={handleImSafe} activeOpacity={0.85}>
           <Text style={styles.safeBtnText}>I'm Safe Now</Text>
         </TouchableOpacity>
+
+        {/* Call Again */}
+        <TouchableOpacity
+          style={styles.callAgainBtn}
+          onPress={callFirstContact}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.callAgainText}>📞 Call Again — {firstContactName}</Text>
+        </TouchableOpacity>
+
+        {/* Share location nudge */}
+        <Text style={styles.shareNudge}>
+          📍 Location shared with your emergency contacts
+        </Text>
       </View>
-    </SafeAreaView>
+    );
+  }
+
+  // ── Active flow ─────────────────────────────────────────────────────────────
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="#7F1D1D" />
+
+      {/* Expanding pulse rings */}
+      <View style={styles.ringsWrap}>
+        <PulseRing delay={0} />
+        <PulseRing delay={533} />
+        <PulseRing delay={1066} />
+      </View>
+
+      {/* Main pulsing circle */}
+      <Animated.View style={[styles.mainCircle, circleStyle]}>
+        {countdown !== null ? (
+          <Text style={styles.countdownText}>{countdown}</Text>
+        ) : (
+          <Text style={styles.sosText}>SOS</Text>
+        )}
+      </Animated.View>
+
+      {/* Headline */}
+      {countdown !== null ? (
+        <>
+          <Text style={styles.headlineText}>Hold on.</Text>
+          <Text style={styles.subText}>Sending emergency alert in {countdown}…</Text>
+        </>
+      ) : (
+        <>
+          <Text style={styles.headlineText}>Emergency Alert Activated</Text>
+          <Text style={styles.subText}>Stay calm. Help is on the way.</Text>
+        </>
+      )}
+
+      {/* Sequential status rows — use real contact names */}
+      {countdown === null && (
+        <View style={styles.statusCard}>
+          <StatusRow
+            icon="👥"
+            title="Alerting trusted contacts…"
+            sub={contactNames}
+            visible={phasesDone.includes('contacts')}
+            done={phasesDone.includes('contacts')}
+          />
+          <StatusRow
+            icon="📞"
+            title={`Calling ${firstContactName}…`}
+            sub="Emergency call initiated"
+            visible={phasesDone.includes('authorities')}
+            done={phasesDone.includes('authorities')}
+          />
+          <StatusRow
+            icon="📍"
+            title="Live tracking activated"
+            sub="28.5494° N, 77.2001° E"
+            visible={phasesDone.includes('tracking')}
+            done={phasesDone.includes('tracking')}
+          />
+        </View>
+      )}
+
+      {/* Cancel — only during countdown */}
+      {countdown !== null && (
+        <TouchableOpacity style={styles.cancelBtn} onPress={handleImSafe} activeOpacity={0.7}>
+          <Text style={styles.cancelText}>Cancel</Text>
+        </TouchableOpacity>
+      )}
+    </View>
   );
 }
+
+const CIRCLE_SIZE = 160;
+const RING_SIZE   = CIRCLE_SIZE;
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFF5F5',
-    paddingHorizontal: 20,
-  },
-
-  /* Top nav */
-  topNav: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 8,
-    marginBottom: 16,
-  },
-  navBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#7F1D1D',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 2,
+    paddingHorizontal: 28,
   },
-  navBtnIcon: { fontSize: 20, color: '#0F172A' },
-  restartBtn: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  restartText: { fontSize: 13, fontWeight: '600', color: '#0F172A' },
 
-  /* Pulse area */
-  pulseArea: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 140,
-    marginBottom: 20,
-  },
-  outerRing: {
+  /* Rings */
+  ringsWrap: {
     position: 'absolute',
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: '#EF4444',
-  },
-  innerCircle: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: '#EF4444',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#EF4444',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
+    top: '50%',
+    marginTop: -(RING_SIZE / 2) - 80,
   },
-  alarmEmoji: { fontSize: 30 },
+  ring: {
+    position: 'absolute',
+    width: RING_SIZE,
+    height: RING_SIZE,
+    borderRadius: RING_SIZE / 2,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
 
-  /* Text */
-  alertTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#0F172A',
-    textAlign: 'center',
-    marginBottom: 8,
+  /* Main circle */
+  mainCircle: {
+    width: CIRCLE_SIZE,
+    height: CIRCLE_SIZE,
+    borderRadius: CIRCLE_SIZE / 2,
+    backgroundColor: '#EF4444',
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 32,
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.6,
+    shadowRadius: 24,
+    elevation: 16,
   },
-  alertSub: {
-    fontSize: 14,
-    color: '#64748B',
+  countdownText: {
+    color: '#FFFFFF',
+    fontSize: 64,
+    fontWeight: '900',
+    lineHeight: 70,
+  },
+  sosText: {
+    color: '#FFFFFF',
+    fontSize: 36,
+    fontWeight: '900',
+    letterSpacing: 4,
+  },
+
+  /* Headline */
+  headlineText: {
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '800',
     textAlign: 'center',
+    marginBottom: 6,
+  },
+  subText: {
+    color: 'rgba(255,255,255,0.65)',
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 28,
     lineHeight: 20,
-    marginBottom: 20,
   },
 
   /* Status card */
   statusCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
+    width: '100%',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
     paddingHorizontal: 16,
-    marginBottom: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    elevation: 3,
+    paddingVertical: 4,
   },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 14,
     gap: 12,
-  },
-  statusRowBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: 'rgba(255,255,255,0.08)',
   },
-  statusIcon: {
+  statusIconWrap: {
     width: 40,
     height: 40,
     borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
-  statusEmoji: { fontSize: 18 },
-  statusText: { flex: 1 },
-  statusTitle: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
-  statusSub: { fontSize: 12, color: '#64748B', marginTop: 1 },
-  checkCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#22C55E',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkMark: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
-  spinnerCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 2,
-    borderColor: '#F59E0B',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  spinnerDot: { color: '#F59E0B', fontSize: 16 },
-
-  /* Call banner */
-  callBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1E293B',
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 14,
-    gap: 12,
-  },
-  callIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#22C55E',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  callIcon: { fontSize: 18 },
-  callText: { flex: 1 },
-  callLabel: { fontSize: 10, fontWeight: '700', color: '#94A3B8', letterSpacing: 0.5 },
-  callTitle: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
-  callDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#22C55E',
-  },
-
-  /* Emergency CTA */
-  emergencyBtn: {
-    backgroundColor: '#EF4444',
-    borderRadius: 16,
-    paddingVertical: 18,
-    alignItems: 'center',
-    shadowColor: '#EF4444',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  emergencyBtnText: {
-    color: '#FFFFFF',
-    fontSize: 16,
+  statusIcon: { fontSize: 18 },
+  statusTextWrap: { flex: 1 },
+  statusTitle: {
+    fontSize: 14,
     fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  statusSub: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.55)',
+  },
+  checkWrap: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#4ADE80',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  checkText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
+
+  /* Cancel */
+  cancelBtn: {
+    marginTop: 32,
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  cancelText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 14,
+    fontWeight: '600',
   },
 
-  /* Done state */
+  /* ── Done state ── */
   doneContainer: {
     flex: 1,
-    backgroundColor: '#F0FFF4',
-  },
-  doneInner: {
-    flex: 1,
+    backgroundColor: '#7F1D1D',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 32,
   },
-  doneCheckWrap: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: '#22C55E',
+  doneCheckCircle: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#4ADE80',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 24,
-    shadowColor: '#22C55E',
+    shadowColor: '#4ADE80',
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    elevation: 8,
+    shadowOpacity: 0.5,
+    shadowRadius: 16,
+    elevation: 10,
   },
-  doneCheck: { fontSize: 48, color: '#FFFFFF' },
+  doneCheckText: { color: '#FFFFFF', fontSize: 52, fontWeight: '300' },
   doneTitle: {
+    color: '#FFFFFF',
     fontSize: 32,
     fontWeight: '800',
-    color: '#0F172A',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   doneSub: {
+    color: 'rgba(255,255,255,0.7)',
     fontSize: 15,
-    color: '#64748B',
-    marginBottom: 40,
     textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 32,
+  },
+  doneList: {
+    width: '100%',
+    marginBottom: 36,
+    gap: 10,
+  },
+  doneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  doneRowCheck: {
+    color: '#4ADE80',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  doneRowText: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 14,
+    fontWeight: '500',
   },
   safeBtn: {
-    backgroundColor: '#22C55E',
-    borderRadius: 16,
-    paddingVertical: 18,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingVertical: 16,
     paddingHorizontal: 48,
-    shadowColor: '#22C55E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    marginBottom: 12,
   },
   safeBtnText: {
-    color: '#FFFFFF',
+    color: '#7F1D1D',
     fontSize: 16,
+    fontWeight: '800',
+  },
+  callAgainBtn: {
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 28,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  callAgainText: {
+    color: '#FFFFFF',
+    fontSize: 14,
     fontWeight: '700',
+    textAlign: 'center',
+  },
+  shareNudge: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 12,
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+
+  /* ── Emotional closure ── */
+  closureContainer: {
+    flex: 1,
+    backgroundColor: '#F0FFF4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  closureEmoji: {
+    fontSize: 56,
+    marginBottom: 20,
+  },
+  closureTitle: {
+    fontSize: 30,
+    fontWeight: '900',
+    color: '#0F172A',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  closureSub: {
+    fontSize: 15,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 24,
+    marginBottom: 32,
+  },
+  closureRows: {
+    width: '100%',
+    gap: 12,
+  },
+  closureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    gap: 12,
+  },
+  closureCheck: {
+    fontSize: 15,
+    color: '#22C55E',
+    fontWeight: '800',
+  },
+  closureRowText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0F172A',
   },
 });

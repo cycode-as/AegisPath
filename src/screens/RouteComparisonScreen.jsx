@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -24,6 +24,7 @@ import SkeletonCard from '../components/SkeletonCard';
 import FactorBar from '../components/FactorBar';
 import SOSButton from '../components/SOSButton';
 import OfflineBanner from '../components/OfflineBanner';
+import NoSafeRouteCard from '../components/NoSafeRouteCard';
 import { useRouteStore } from '../stores/useRouteStore';
 import { colors, getRiskColor } from '../config/colors';
 
@@ -150,9 +151,14 @@ export default function RouteComparisonScreen({ navigation }) {
   } = useRouteStore();
 
   const bottomSheetRef = useRef(null);
+  const [noSafeRouteDismissed, setNoSafeRouteDismissed] = useState(false);
 
   // Initial fetch only — setTimeMode handles re-fetches on toggle
   useEffect(() => { fetchRoutes(); }, []);
+
+  // Detect if all routes are high risk
+  const allHighRisk = routes.length > 0 && routes.every(r => r.riskLevel === 'HIGH');
+  const showNoSafeRoute = allHighRisk && !noSafeRouteDismissed;
 
   const handleSeeWhy = (route) => {
     setSelectedRoute(route);
@@ -207,23 +213,31 @@ export default function RouteComparisonScreen({ navigation }) {
             <View testID="skeleton-card"><SkeletonCard /></View>
           </ScrollView>
         ) : (
-          <FlatList
-            style={s.scroll}
-            data={sorted}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={s.listContent}
-            showsVerticalScrollIndicator={false}
-            renderItem={({ item }) => (
-              <View testID="route-card">
-                <RouteCard
-                  route={item}
-                  onSeeWhy={handleSeeWhy}
-                  onNavigate={handleNavigate}
-                  onTimeImpact={handleTimeImpact}
-                />
-              </View>
+          <>
+            {showNoSafeRoute && (
+              <NoSafeRouteCard
+                onDismiss={() => setNoSafeRouteDismissed(true)}
+                navigation={navigation}
+              />
             )}
-          />
+            <FlatList
+              style={s.scroll}
+              data={sorted}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={s.listContent}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item }) => (
+                <View testID="route-card">
+                  <RouteCard
+                    route={item}
+                    onSeeWhy={handleSeeWhy}
+                    onNavigate={handleNavigate}
+                    onTimeImpact={handleTimeImpact}
+                  />
+                </View>
+              )}
+            />
+          </>
         )}
       </SafeAreaView>
 

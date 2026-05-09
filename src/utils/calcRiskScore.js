@@ -20,5 +20,11 @@ export const calcRiskScore = (zone, hour) => {
     riskLevel:   finalRisk >= 60 ? 'HIGH' :
                  finalRisk >= 35 ? 'MODERATE' : 'LOW',
     timeFactor,
+    factors: {
+      crime: Math.round(zone.crimeLevel                    * 0.40),
+      time:  Math.round(timeFactor                         * 0.25),
+      crowd: Math.round((crowdMap[zone.crowdLevel] ?? 10)  * 0.20),
+      infra: Math.round((infraMap[zone.infraLevel] ?? 10)  * 0.15),
+    },
   };
 };

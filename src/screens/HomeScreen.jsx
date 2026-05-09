@@ -1,12 +1,34 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput,
   TouchableOpacity, StyleSheet, StatusBar, ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors } from '../config/colors';
 
 export default function HomeScreen({ navigation }) {
+  const [userName, setUserName] = useState('');
+
+  useEffect(() => {
+    AsyncStorage.getItem('@aegispath_user_profile').then(raw => {
+      if (raw) {
+        const profile = JSON.parse(raw);
+        if (profile.name) setUserName(profile.name.split(' ')[0]);
+      }
+    });
+  }, []);
+
+  const handleLogout = async () => {
+    await AsyncStorage.multiRemove([
+      '@aegispath_user_profile',
+      '@aegispath_emergency_contacts',
+      '@aegispath_travel_pref',
+      '@aegispath_trusted_locations',
+      '@aegispath_onboarded',
+    ]);
+    navigation.replace('Onboarding');
+  };
   return (
     <SafeAreaView style={s.safe}>
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
@@ -30,14 +52,19 @@ export default function HomeScreen({ navigation }) {
               <Text style={s.aiLabel}>AI</Text>
             </View>
           </View>
-          <TouchableOpacity style={s.bellBtn} activeOpacity={0.7} onPress={() => navigation.navigate('IncidentReport')}>
-            <Text style={s.bellIcon}>🔔</Text>
+          {/* Logout — subtle icon button, top right */}
+          <TouchableOpacity
+            style={s.logoutBtn}
+            activeOpacity={0.7}
+            onPress={handleLogout}
+          >
+            <Text style={s.logoutIcon}>⎋</Text>
           </TouchableOpacity>
         </View>
 
         {/* ── Hero ── */}
         <View style={s.hero}>
-          <Text style={s.helloText}>Hello,</Text>
+          <Text style={s.helloText}>{userName ? `Hello, ${userName}` : 'Hello,'}</Text>
           <Text style={s.heroTitle}>
             <Text style={s.heroStay}>STAY </Text>
             <Text style={s.heroSafe}>SAFE</Text>
@@ -48,6 +75,17 @@ export default function HomeScreen({ navigation }) {
           <View style={s.aiBadge}>
             <Text style={s.aiBadgeText}>✦ AI Safety Engine • Online</Text>
           </View>
+
+          {/* Report incident — contextual, below hero */}
+          <TouchableOpacity
+            style={s.reportRow}
+            activeOpacity={0.75}
+            onPress={() => navigation.navigate('IncidentReport')}
+          >
+            <Text style={s.reportRowIcon}>⚠️</Text>
+            <Text style={s.reportRowText}>Report an incident on this route</Text>
+            <Text style={s.reportRowArrow}>→</Text>
+          </TouchableOpacity>
         </View>
 
         {/* ── Route form card ── */}
@@ -95,7 +133,7 @@ export default function HomeScreen({ navigation }) {
 
           <TouchableOpacity
             style={s.cta}
-            onPress={() => navigation.navigate('RouteComparison')}
+            onPress={() => navigation.navigate('TravelMode')}
             activeOpacity={0.85}
           >
             <Text style={s.ctaText}>Find Safe Route →</Text>
@@ -167,20 +205,47 @@ const s = StyleSheet.create({
     color: colors.textSecondary,
     fontWeight: '500',
   },
-  bellBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#FFFFFF',
+  /* Logout — subtle icon in header */
+  logoutBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
   },
-  bellIcon: { fontSize: 18 },
+  logoutIcon: {
+    fontSize: 16,
+    color: colors.textSecondary,
+  },
+
+  /* Report row — below hero, contextual */
+  reportRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+    gap: 8,
+  },
+  reportRowIcon: { fontSize: 15 },
+  reportRowText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#92400E',
+  },
+  reportRowArrow: {
+    fontSize: 14,
+    color: '#92400E',
+    fontWeight: '700',
+  },
 
   /* Hero */
   hero: { marginBottom: 24 },
