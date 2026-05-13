@@ -20,7 +20,7 @@ import Animated, {
   withDelay,
   Easing,
 } from 'react-native-reanimated';
-import { sendSOS, callFirstContact, getEmergencyContacts } from '../services/sendSOS';
+import { sendSOS, callFirstContact, getEmergencyContacts, call112 } from '../services/sendSOS';
 import { useRouteStore } from '../stores/useRouteStore';
 
 // ─── Phase definitions ────────────────────────────────────────────────────────
@@ -162,6 +162,8 @@ export default function SOSScreen({ navigation }) {
           setPhasesDone(prev => [...prev, p.id]);
         }, p.delay);
       });
+      // Call 112 after contacts phase (2.6s)
+      setTimeout(() => call112(), 2600);
       // Done after all phases
       setTimeout(() => setAllDone(true), 4400);
     }, 3000);

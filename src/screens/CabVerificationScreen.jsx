@@ -9,6 +9,7 @@ import {
   StyleSheet, StatusBar, ScrollView, Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors } from '../config/colors';
 
 const CAB_PROVIDERS = ['Ola', 'Uber', 'Rapido', 'Auto', 'Other'];
@@ -21,7 +22,14 @@ export default function CabVerificationScreen({ navigation }) {
   const [shareTrip,     setShareTrip]     = useState(true);
   const [deviationAlert, setDeviationAlert] = useState(true);
 
-  const handleStartTrip = () => {
+  const handleStartTrip = async () => {
+    // Persist cab details for SOS emergency message
+    await AsyncStorage.setItem('@aegispath_cab_details', JSON.stringify({
+      driverName:    driverName.trim(),
+      vehicleNumber: vehicleNumber.trim(),
+      provider:      provider,
+      vehicleModel:  notes.trim(), // notes field doubles as model/extra info
+    }));
     navigation.navigate('RouteComparison', { travelMode: 'cab' });
   };
 

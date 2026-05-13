@@ -1,21 +1,52 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, TextInput,
-  TouchableOpacity, StyleSheet, StatusBar, ScrollView,
+  View, Text, TextInput, TouchableOpacity,
+  StyleSheet, StatusBar, ScrollView, FlatList,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors } from '../config/colors';
+import { TAB_BAR_HEIGHT } from '../config/layout';
+import { searchLocations } from '../services/locationSearch';
+import { useRouteStore } from '../stores/useRouteStore';
+
+const DEMO_SOURCE = 'Connaught Place, Delhi';
+const DEMO_DEST   = 'Lajpat Nagar Metro';
+
+const QUICK_CHIPS = [
+  { key: 'home',      icon: '🏠', label: 'Home'    },
+  { key: 'college',   icon: '🏫', label: 'College' },
+  { key: 'workplace', icon: '💼', label: 'Work'    },
+  { key: 'hostel',    icon: '🏨', label: 'Hostel'  },
+];
 
 export default function HomeScreen({ navigation }) {
-  const [userName, setUserName] = useState('');
+  const [userName, setUserName]           = useState('');
+  const [source, setSource]               = useState(DEMO_SOURCE);
+  const [destination, setDestination]     = useState(DEMO_DEST);
+  const [activeField, setActiveField]     = useState(null); // 'source' | 'dest'
+  const [suggestions, setSuggestions]     = useState([]);
+  const [searching, setSearching]         = useState(false);
+  const [savedLocations, setSavedLocations] = useState({});
+  const [recentSearches, setRecentSearches] = useState([]);
+  const searchTimer = useRef(null);
 
   useEffect(() => {
+    // Load user profile
     AsyncStorage.getItem('@aegispath_user_profile').then(raw => {
       if (raw) {
-        const profile = JSON.parse(raw);
-        if (profile.name) setUserName(profile.name.split(' ')[0]);
+        const p = JSON.parse(raw);
+        if (p.name) setUserName(p.name.split(' ')[0]);
       }
+    });
+    // Load saved locations
+    AsyncStorage.getItem('@aegispath_trusted_locations').then(raw => {
+      if (raw) setSavedLocations(JSON.parse(raw));
+    });
+    // Load recent searches
+    AsyncStorage.getItem('@aegispath_recent_searches').then(raw => {
+      if (raw) setRecentSearches(JSON.parse(raw));
     });
   }, []);
 
@@ -29,6 +60,54 @@ export default function HomeScreen({ navigation }) {
     ]);
     navigation.replace('Onboarding');
   };
+
+  // Debounced search
+  const handleTextChange = (text, field) => {
+    if (field === 'source') setSource(text);
+    else setDestination(text);
+
+    clearTimeout(searchTimer.current);
+    if (text.length < 2) { setSuggestions([]); return; }
+
+    setSearching(true);
+    searchTimer.current = setTimeout(async () => {
+      const results = await searchLocations(text);
+      setSuggestions(results);
+      setSearching(false);
+    }, 400);
+  };
+
+  const selectSuggestion = async (item) => {
+    const label = item.label;
+    if (activeField === 'source') setSource(label);
+    else setDestination(label);
+    setSuggestions([]);
+    setActiveField(null);
+
+    // Save to recent searches
+    const updated = [label, ...recentSearches.filter(r => r !== label)].slice(0, 5);
+    setRecentSearches(updated);
+    await AsyncStorage.setItem('@aegispath_recent_searches', JSON.stringify(updated));
+  };
+
+  const applyQuickChip = (chipKey) => {
+    const addr = savedLocations[chipKey];
+    if (!addr) return;
+    if (activeField === 'source') setSource(addr);
+    else setDestination(addr);
+    setSuggestions([]);
+  };
+
+  const setTripContext = useRouteStore(s => s.setTripContext);
+
+  const handleFindRoute = () => {
+    if (!source.trim() || !destination.trim()) return;
+    setTripContext(source.trim(), destination.trim());
+    navigation.navigate('TravelMode');
+  };
+
+  const showDropdown = activeField !== null && (suggestions.length > 0 || searching || recentSearches.length > 0);
+
   return (
     <SafeAreaView style={s.safe}>
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
@@ -52,12 +131,7 @@ export default function HomeScreen({ navigation }) {
               <Text style={s.aiLabel}>AI</Text>
             </View>
           </View>
-          {/* Logout — subtle icon button, top right */}
-          <TouchableOpacity
-            style={s.logoutBtn}
-            activeOpacity={0.7}
-            onPress={handleLogout}
-          >
+          <TouchableOpacity style={s.logoutBtn} activeOpacity={0.7} onPress={handleLogout}>
             <Text style={s.logoutIcon}>⎋</Text>
           </TouchableOpacity>
         </View>
@@ -75,8 +149,6 @@ export default function HomeScreen({ navigation }) {
           <View style={s.aiBadge}>
             <Text style={s.aiBadgeText}>✦ AI Safety Engine • Online</Text>
           </View>
-
-          {/* Report incident — contextual, below hero */}
           <TouchableOpacity
             style={s.reportRow}
             activeOpacity={0.75}
@@ -92,8 +164,8 @@ export default function HomeScreen({ navigation }) {
         <View style={s.card}>
           <Text style={s.cardTitle}>PLAN YOUR ROUTE</Text>
 
-          {/* Start input */}
-          <View style={s.inputRow}>
+          {/* Source input */}
+          <View style={[s.inputRow, activeField === 'source' && s.inputRowActive]}>
             <View style={s.inputIconWrap}>
               <Text style={s.inputIcon}>📍</Text>
             </View>
@@ -101,22 +173,28 @@ export default function HomeScreen({ navigation }) {
               <Text style={s.inputLabel}>START</Text>
               <TextInput
                 style={s.input}
-                defaultValue="Connaught Place"
-                placeholder="From"
+                value={source}
+                onChangeText={t => handleTextChange(t, 'source')}
+                onFocus={() => setActiveField('source')}
+                placeholder="Search start location"
                 placeholderTextColor={colors.textSecondary}
+                returnKeyType="next"
               />
             </View>
+            {source.length > 0 && (
+              <TouchableOpacity onPress={() => { setSource(''); setActiveField('source'); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={s.clearBtn}>✕</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Connector */}
           <View style={s.connector}>
-            <View style={s.dot} />
-            <View style={s.dot} />
-            <View style={s.dot} />
+            <View style={s.dot} /><View style={s.dot} /><View style={s.dot} />
           </View>
 
           {/* Destination input */}
-          <View style={s.inputRow}>
+          <View style={[s.inputRow, activeField === 'dest' && s.inputRowActive]}>
             <View style={[s.inputIconWrap, { backgroundColor: '#FEE2E2' }]}>
               <Text style={s.inputIcon}>🚩</Text>
             </View>
@@ -124,38 +202,108 @@ export default function HomeScreen({ navigation }) {
               <Text style={s.inputLabel}>DESTINATION</Text>
               <TextInput
                 style={s.input}
-                defaultValue="Lajpat Nagar Metro"
-                placeholder="To"
+                value={destination}
+                onChangeText={t => handleTextChange(t, 'dest')}
+                onFocus={() => setActiveField('dest')}
+                placeholder="Search destination"
                 placeholderTextColor={colors.textSecondary}
+                returnKeyType="done"
               />
             </View>
+            {destination.length > 0 && (
+              <TouchableOpacity onPress={() => { setDestination(''); setActiveField('dest'); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={s.clearBtn}>✕</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
+          {/* ── Dropdown suggestions ── */}
+          {showDropdown && (
+            <View style={s.dropdown}>
+              {searching && (
+                <View style={s.dropdownLoading}>
+                  <ActivityIndicator size="small" color={colors.brand} />
+                  <Text style={s.dropdownLoadingText}>Searching…</Text>
+                </View>
+              )}
+
+              {/* Recent searches */}
+              {!searching && suggestions.length === 0 && recentSearches.length > 0 && (
+                <>
+                  <Text style={s.dropdownSection}>Recent</Text>
+                  {recentSearches.map((r, i) => (
+                    <TouchableOpacity
+                      key={i}
+                      style={s.dropdownItem}
+                      onPress={() => selectSuggestion({ label: r })}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={s.dropdownItemIcon}>🕐</Text>
+                      <Text style={s.dropdownItemText} numberOfLines={1}>{r}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </>
+              )}
+
+              {/* Nominatim results */}
+              {suggestions.map((item, i) => (
+                <TouchableOpacity
+                  key={i}
+                  style={[s.dropdownItem, i < suggestions.length - 1 && s.dropdownItemBorder]}
+                  onPress={() => selectSuggestion(item)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={s.dropdownItemIcon}>📍</Text>
+                  <Text style={s.dropdownItemText} numberOfLines={2}>{item.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {/* ── Quick access chips ── */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={s.chipsScroll}
+            contentContainerStyle={s.chipsContent}
+          >
+            <TouchableOpacity
+              style={s.chip}
+              onPress={() => {
+                if (activeField === 'source') setSource('My Current Location');
+                else setDestination('My Current Location');
+                setSuggestions([]);
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={s.chipIcon}>📡</Text>
+              <Text style={s.chipText}>Current</Text>
+            </TouchableOpacity>
+            {QUICK_CHIPS.map(chip => {
+              const addr = savedLocations[chip.key];
+              if (!addr) return null;
+              return (
+                <TouchableOpacity
+                  key={chip.key}
+                  style={s.chip}
+                  onPress={() => applyQuickChip(chip.key)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={s.chipIcon}>{chip.icon}</Text>
+                  <Text style={s.chipText}>{chip.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
           <TouchableOpacity
-            style={s.cta}
-            onPress={() => navigation.navigate('TravelMode')}
+            style={[s.cta, (!source.trim() || !destination.trim()) && s.ctaDisabled]}
+            onPress={handleFindRoute}
             activeOpacity={0.85}
+            disabled={!source.trim() || !destination.trim()}
           >
             <Text style={s.ctaText}>Find Safe Route →</Text>
           </TouchableOpacity>
-        </View>
-
-        {/* ── Stats ── */}
-        <View style={s.statsRow}>
-          <View style={s.statItem}>
-            <Text style={s.statValue}>2.4M</Text>
-            <Text style={s.statLabel}>Routes saved</Text>
-          </View>
-          <View style={s.statDivider} />
-          <View style={s.statItem}>
-            <Text style={s.statValue}>98%</Text>
-            <Text style={s.statLabel}>Accuracy</Text>
-          </View>
-          <View style={s.statDivider} />
-          <View style={s.statItem}>
-            <Text style={s.statValue}>24/7</Text>
-            <Text style={s.statLabel}>Live data</Text>
-          </View>
         </View>
 
         <Text style={s.poweredBy}>Powered by AegisPath AI</Text>
@@ -165,238 +313,137 @@ export default function HomeScreen({ navigation }) {
 }
 
 const s = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  scroll: {
-    flex: 1,
-  },
-  content: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 32,
-  },
+  safe:    { flex: 1, backgroundColor: colors.background },
+  scroll:  { flex: 1 },
+  content: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: TAB_BAR_HEIGHT + 16 },
 
-  /* Header */
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 28,
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between', marginBottom: 28,
   },
-  logoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
+  logoRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   logoBox: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
+    width: 42, height: 42, borderRadius: 12,
     backgroundColor: colors.brand,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center', justifyContent: 'center',
   },
   logoEmoji: { fontSize: 22 },
-  appName: { fontSize: 18, fontWeight: '800' },
-  aiLabel: {
-    fontSize: 11,
-    color: colors.textSecondary,
-    fontWeight: '500',
-  },
-  /* Logout — subtle icon in header */
+  appName:   { fontSize: 18, fontWeight: '800' },
+  aiLabel:   { fontSize: 11, color: colors.textSecondary, fontWeight: '500' },
   logoutBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 36, height: 36, borderRadius: 10,
     backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: colors.cardBorder,
   },
-  logoutIcon: {
-    fontSize: 16,
-    color: colors.textSecondary,
-  },
+  logoutIcon: { fontSize: 16, color: colors.textSecondary },
 
-  /* Report row — below hero, contextual */
-  reportRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFF7ED',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: '#FED7AA',
-    gap: 8,
-  },
-  reportRowIcon: { fontSize: 15 },
-  reportRowText: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#92400E',
-  },
-  reportRowArrow: {
-    fontSize: 14,
-    color: '#92400E',
-    fontWeight: '700',
-  },
-
-  /* Hero */
   hero: { marginBottom: 24 },
-  helloText: {
-    fontSize: 15,
-    color: colors.textSecondary,
-  },
-  heroTitle: {
-    fontSize: 38,
-    fontWeight: '900',
-    lineHeight: 42,
-    marginBottom: 8,
-  },
-  heroStay: { color: colors.textPrimary, fontStyle: 'italic' },
-  heroSafe: { color: colors.brand, fontStyle: 'italic' },
-  heroSub: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    lineHeight: 20,
-    marginBottom: 12,
-  },
+  helloText: { fontSize: 15, color: colors.textSecondary },
+  heroTitle: { fontSize: 38, fontWeight: '900', lineHeight: 42, marginBottom: 8 },
+  heroStay:  { color: colors.textPrimary, fontStyle: 'italic' },
+  heroSafe:  { color: colors.brand, fontStyle: 'italic' },
+  heroSub:   { fontSize: 14, color: colors.textSecondary, lineHeight: 20, marginBottom: 12 },
   aiBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#E8EDFF',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
+    alignSelf: 'flex-start', backgroundColor: '#E8EDFF',
+    borderRadius: 999, paddingHorizontal: 12, paddingVertical: 5,
   },
-  aiBadgeText: {
-    fontSize: 12,
-    color: colors.brand,
-    fontWeight: '600',
+  aiBadgeText: { fontSize: 12, color: colors.brand, fontWeight: '600' },
+  reportRow: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#FFF7ED', borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 11,
+    marginTop: 12, borderWidth: 1, borderColor: '#FED7AA', gap: 8,
   },
+  reportRowIcon:  { fontSize: 15 },
+  reportRowText:  { flex: 1, fontSize: 13, fontWeight: '600', color: '#92400E' },
+  reportRowArrow: { fontSize: 14, color: '#92400E', fontWeight: '700' },
 
-  /* Card */
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 20,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 3,
+    backgroundColor: '#FFFFFF', borderRadius: 20,
+    padding: 20, marginBottom: 16,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06, shadowRadius: 12, elevation: 3,
   },
   cardTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    letterSpacing: 1,
-    marginBottom: 14,
+    fontSize: 11, fontWeight: '700', color: colors.textSecondary,
+    letterSpacing: 1, marginBottom: 14,
   },
   inputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 14,
-    padding: 12,
-    gap: 10,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#F8FAFC', borderRadius: 14,
+    padding: 12, gap: 10,
+    borderWidth: 1.5, borderColor: 'transparent',
   },
+  inputRowActive: { borderColor: colors.brand, backgroundColor: '#FAFBFF' },
   inputIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 36, height: 36, borderRadius: 10,
     backgroundColor: '#EEF2FF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
+    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
-  inputIcon: { fontSize: 16 },
+  inputIcon:    { fontSize: 16 },
   inputTextWrap: { flex: 1, minWidth: 0 },
   inputLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    letterSpacing: 0.5,
-    marginBottom: 1,
+    fontSize: 10, fontWeight: '700', color: colors.textSecondary,
+    letterSpacing: 0.5, marginBottom: 1,
   },
-  input: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    padding: 0,
-  },
-  connector: {
-    paddingLeft: 30,
-    paddingVertical: 5,
-    gap: 3,
-  },
-  dot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#CBD5E1',
-    marginBottom: 3,
-  },
-  cta: {
-    backgroundColor: colors.brand,
-    borderRadius: 14,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginTop: 14,
-    shadowColor: colors.brand,
+  input: { fontSize: 15, fontWeight: '600', color: colors.textPrimary, padding: 0 },
+  clearBtn: { fontSize: 14, color: colors.textSecondary, paddingHorizontal: 4 },
+
+  connector: { paddingLeft: 30, paddingVertical: 5, gap: 3 },
+  dot: { width: 4, height: 4, borderRadius: 2, backgroundColor: '#CBD5E1', marginBottom: 3 },
+
+  /* Dropdown */
+  dropdown: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    marginTop: 6,
+    overflow: 'hidden',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.08,
     shadowRadius: 8,
     elevation: 4,
   },
-  ctaText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
+  dropdownLoading: {
+    flexDirection: 'row', alignItems: 'center',
+    gap: 8, padding: 14,
   },
+  dropdownLoadingText: { fontSize: 13, color: colors.textSecondary },
+  dropdownSection: {
+    fontSize: 10, fontWeight: '700', color: colors.textSecondary,
+    letterSpacing: 0.5, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 4,
+  },
+  dropdownItem: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 14, paddingVertical: 12, gap: 10,
+  },
+  dropdownItemBorder: { borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+  dropdownItemIcon: { fontSize: 16, flexShrink: 0 },
+  dropdownItemText: { flex: 1, fontSize: 14, color: colors.textPrimary, fontWeight: '500' },
 
-  /* Stats */
-  statsRow: {
-    flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginBottom: 14,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
+  /* Quick chips */
+  chipsScroll: { marginTop: 12, marginBottom: 14 },
+  chipsContent: { gap: 8, paddingRight: 4 },
+  chip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: '#F0F4FF',
+    borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7,
+    borderWidth: 1, borderColor: '#C7D2FE',
   },
-  statItem: {
-    flex: 1,
-    alignItems: 'center',
+  chipIcon: { fontSize: 14 },
+  chipText: { fontSize: 12, fontWeight: '600', color: colors.brand },
+
+  cta: {
+    backgroundColor: colors.brand, borderRadius: 14,
+    paddingVertical: 16, alignItems: 'center',
+    shadowColor: colors.brand, shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
   },
-  statValue: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  statLabel: {
-    fontSize: 11,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  statDivider: {
-    width: 1,
-    height: 28,
-    backgroundColor: '#E2E8F0',
-  },
-  poweredBy: {
-    textAlign: 'center',
-    fontSize: 12,
-    color: colors.textSecondary,
-  },
+  ctaDisabled: { opacity: 0.45 },
+  ctaText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+
+  poweredBy:  { textAlign: 'center', fontSize: 12, color: colors.textSecondary },
 });

@@ -290,7 +290,7 @@ export default function TimeImpactScreen({ navigation, route: navRoute }) {
         {/* ── Smart recommendation ── */}
         <View style={s.recommendCard}>
           <Text style={s.recommendIcon}>🤖</Text>
-          <Text style={s.recommendTitle}>AI Recommendation</Text>
+          <Text style={s.recommendTitle}>AegisPath Recommendation</Text>
           <Text style={s.recommendText}>{recommendation}</Text>
         </View>
 

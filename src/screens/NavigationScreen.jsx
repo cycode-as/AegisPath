@@ -27,18 +27,19 @@ import ShakeSOSAlert from '../components/ShakeSOSAlert';
 import { useShakeToSOS } from '../hooks/useShakeToSOS';
 import { colors, getRiskColor } from '../config/colors';
 import { useRouteStore } from '../stores/useRouteStore';
+import { call112 } from '../services/sendSOS';
 
 // ---------------------------------------------------------------------------
-// Hardcoded route coordinates: Connaught Place → Lajpat Nagar Metro
+// Demo fallback coordinates (used only when no dynamic route is available)
 // ---------------------------------------------------------------------------
-const ROUTE_COORDS = [
-  [28.6315, 77.2167], // Connaught Place
-  [28.6280, 77.2210], // Janpath
-  [28.6230, 77.2270], // Mandi House
-  [28.6170, 77.2330], // ITO
-  [28.6090, 77.2380], // Pragati Maidan
-  [28.5990, 77.2400], // Lajpat Nagar
-  [28.5700, 77.2410], // Lajpat Nagar Metro
+const DEMO_COORDS = [
+  [28.6315, 77.2167],
+  [28.6280, 77.2210],
+  [28.6230, 77.2270],
+  [28.6170, 77.2330],
+  [28.6090, 77.2380],
+  [28.5990, 77.2400],
+  [28.5700, 77.2410],
 ];
 
 // Zone segments along the route (index of coord where zone changes)
@@ -136,10 +137,14 @@ function buildLeafletHTML(coords, dotIndex) {
 // NavigationScreen
 // ---------------------------------------------------------------------------
 export default function NavigationScreen({ navigation }) {
-  const { selectedRoute } = useRouteStore();
-  const [dotIndex, setDotIndex]         = useState(0);
+  const { selectedRoute, routeCoords: storeCoords, source, destination } = useRouteStore();
+
+  // Use dynamic coords from store if available, otherwise fall back to demo
+  const ROUTE_COORDS = (storeCoords && storeCoords.length >= 2) ? storeCoords : DEMO_COORDS;
+  const [dotIndex, setDotIndex]           = useState(0);
   const [alertVisible, setAlertVisible]   = useState(false);
   const [rerouteVisible, setRerouteVisible] = useState(false);
+  const [policeVisible, setPoliceVisible] = useState(false);
   const webViewRef = useRef(null);
 
   const currentZone = getZoneForIndex(dotIndex);
@@ -158,11 +163,11 @@ export default function NavigationScreen({ navigation }) {
       });
     }, 800);
     return () => clearInterval(interval);
-  }, []);
+  }, [ROUTE_COORDS.length]);
 
   // Send updated dot position to WebView whenever dotIndex changes
   useEffect(() => {
-    const [lat, lng] = ROUTE_COORDS[dotIndex];
+    const [lat, lng] = ROUTE_COORDS[dotIndex] ?? ROUTE_COORDS[0];
     const js = `
       (function() {
         var e = new MessageEvent('message', {
@@ -206,7 +211,7 @@ export default function NavigationScreen({ navigation }) {
         </View>
       </SafeAreaView>
 
-      {/* Leaflet map */}
+      {/* Leaflet map — uses dynamic route coords */}
       <WebView
         ref={webViewRef}
         style={styles.map}
@@ -225,19 +230,28 @@ export default function NavigationScreen({ navigation }) {
         }}
       />
 
-      {/* Nearest police station card — always visible */}
-      <View style={styles.policeCard}>
-        <View style={styles.policeIconWrap}>
-          <Text style={styles.policeIcon}>🚔</Text>
-        </View>
-        <View style={styles.policeText}>
-          <Text style={styles.policeTitle}>Nearest Police Station</Text>
-          <Text style={styles.policeSub}>Connaught Place PCR  ·  0.8 km away</Text>
-        </View>
-        <View style={styles.policeDistance}>
-          <Text style={styles.policeDistanceText}>112</Text>
-        </View>
-      </View>
+      {/* Map recenter button */}
+      <TouchableOpacity
+        style={styles.recenterBtn}
+        onPress={() => {
+          // Re-inject fitBounds to recenter map on route
+          webViewRef.current?.injectJavaScript(`
+            (function() { map.fitBounds(polyline.getBounds(), { padding: [40, 40] }); })(); true;
+          `);
+        }}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.recenterIcon}>⊕</Text>
+      </TouchableOpacity>
+
+      {/* Police assistance floating button */}
+      <TouchableOpacity
+        style={styles.policeBtn}
+        onPress={() => setPoliceVisible(true)}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.policeBtnIcon}>🚔</Text>
+      </TouchableOpacity>
 
       {/* Zone alert modal */}
       <Modal
@@ -307,6 +321,44 @@ export default function NavigationScreen({ navigation }) {
           </View>
         </View>
       </Modal>
+      {/* Police assistance modal */}
+      <Modal
+        visible={policeVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPoliceVisible(false)}
+      >
+        <View style={styles.alertBackdrop}>
+          <View style={styles.policeModal}>
+            <View style={styles.policeModalHeader}>
+              <Text style={styles.policeModalTitle}>🚔 Nearest Police Support</Text>
+              <TouchableOpacity onPress={() => setPoliceVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={styles.policeModalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {[
+              { icon: '🏢', label: 'Station', value: 'Connaught Place PCR' },
+              { icon: '📍', label: 'Address', value: 'Baba Kharak Singh Marg, CP' },
+              { icon: '📞', label: 'Contact', value: '011-23412345' },
+              { icon: '🕐', label: 'ETA',     value: '~4 minutes' },
+              { icon: '📏', label: 'Distance', value: '0.8 km away' },
+            ].map((row, i) => (
+              <View key={i} style={[styles.policeModalRow, i > 0 && styles.policeModalRowBorder]}>
+                <Text style={styles.policeModalIcon}>{row.icon}</Text>
+                <Text style={styles.policeModalLabel}>{row.label}</Text>
+                <Text style={styles.policeModalValue}>{row.value}</Text>
+              </View>
+            ))}
+            <TouchableOpacity
+              style={styles.policeCallBtn}
+              onPress={() => { setPoliceVisible(false); call112(); }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.policeCallBtnText}>📞 Call 112 — Emergency</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -346,42 +398,81 @@ const styles = StyleSheet.create({
   map: {
     flex: 1,
   },
-  /* Police card */
-  policeCard: {
+  /* Recenter button */
+  recenterBtn: {
+    position: 'absolute',
+    bottom: 190,
+    right: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  recenterIcon: { fontSize: 22, color: colors.brand },
+
+  /* Police floating button */
+  policeBtn: {
     position: 'absolute',
     bottom: 110,
-    left: 16,
-    right: 16,
+    right: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: '#1E293B',
-    borderRadius: 16,
-    padding: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  policeBtnIcon: { fontSize: 20 },
+
+  /* Police modal */
+  policeModal: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  policeModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  policeModalTitle: { fontSize: 16, fontWeight: '800', color: colors.textPrimary },
+  policeModalClose: { fontSize: 18, color: colors.textSecondary },
+  policeModalRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 11,
     gap: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 8,
   },
-  policeIconWrap: {
-    width: 40, height: 40, borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    alignItems: 'center', justifyContent: 'center',
-    flexShrink: 0,
+  policeModalRowBorder: { borderTopWidth: 1, borderTopColor: colors.cardBorder },
+  policeModalIcon:  { fontSize: 18, width: 24, textAlign: 'center' },
+  policeModalLabel: { fontSize: 12, color: colors.textSecondary, fontWeight: '600', width: 64 },
+  policeModalValue: { flex: 1, fontSize: 14, fontWeight: '600', color: colors.textPrimary },
+  policeCallBtn: {
+    backgroundColor: colors.brand,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 12,
   },
-  policeIcon: { fontSize: 20 },
-  policeText: { flex: 1 },
-  policeTitle: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
-  policeSub:   { fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 2 },
-  policeDistance: {
-    backgroundColor: '#22C55E',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    flexShrink: 0,
-  },
-  policeDistanceText: { fontSize: 13, fontWeight: '800', color: '#FFFFFF' },
+  policeCallBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
   // Zone alert
   alertBackdrop: {
     flex: 1,

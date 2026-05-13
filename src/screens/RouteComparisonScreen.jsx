@@ -318,7 +318,7 @@ const s = StyleSheet.create({
   listContent: {
     paddingHorizontal: 16,
     paddingTop: 4,
-    paddingBottom: 110,
+    paddingBottom: 110 + 80, // SOS button + tab bar
   },
   sheetBg: {
     backgroundColor: '#FFFFFF',

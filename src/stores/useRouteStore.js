@@ -9,6 +9,16 @@ export const useRouteStore = create((set, get) => ({
   error:         null,
   sosActive:     false,
 
+  // Trip context — set from HomeScreen before navigating
+  source:      'Connaught Place, Delhi',
+  destination: 'Lajpat Nagar Metro',
+  // Dynamic route coordinates for NavigationScreen
+  // Format: [[lat, lng], ...] — at least 2 points
+  routeCoords: null,
+
+  setTripContext: (source, destination) => set({ source, destination }),
+  setRouteCoords: (coords) => set({ routeCoords: coords }),
+
   fetchRoutes: async () => {
     set({ isLoading: true, error: null });
     try {
@@ -30,6 +40,5 @@ export const useRouteStore = create((set, get) => ({
   },
 
   setSelectedRoute: (route) => set({ selectedRoute: route }),
-
   setSosActive: (value) => set({ sosActive: value }),
 }));
