@@ -42,20 +42,6 @@ const DEMO_COORDS = [
   [28.5700, 77.2410],
 ];
 
-// Zone segments along the route (index of coord where zone changes)
-const ZONE_SEGMENTS = [
-  { upToIndex: 2, name: 'CP Market',        safetyScore: 88, riskLevel: 'LOW'      },
-  { upToIndex: 4, name: 'Mandi House Area', safetyScore: 72, riskLevel: 'MODERATE' },
-  { upToIndex: 6, name: 'Lajpat Nagar',     safetyScore: 85, riskLevel: 'LOW'      },
-];
-
-function getZoneForIndex(index) {
-  for (const seg of ZONE_SEGMENTS) {
-    if (index <= seg.upToIndex) return seg;
-  }
-  return ZONE_SEGMENTS[ZONE_SEGMENTS.length - 1];
-}
-
 // ---------------------------------------------------------------------------
 // Leaflet HTML — self-contained, no external dependencies beyond CDN tiles
 // ---------------------------------------------------------------------------
@@ -147,7 +133,15 @@ export default function NavigationScreen({ navigation }) {
   const [policeVisible, setPoliceVisible] = useState(false);
   const webViewRef = useRef(null);
 
-  const currentZone = getZoneForIndex(dotIndex);
+  const currentZone = selectedRoute ? {
+    name: selectedRoute.label,
+    safetyScore: selectedRoute.safetyScore,
+    riskLevel: selectedRoute.riskLevel
+  } : {
+    name: 'Unknown',
+    safetyScore: 50,
+    riskLevel: 'MODERATE'
+  };
   const zoneColor   = getRiskColor(currentZone.riskLevel);
 
   const { shakeDetected, countdown, cancelShakeSOS } = useShakeToSOS(() => {

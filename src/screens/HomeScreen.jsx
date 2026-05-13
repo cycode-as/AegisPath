@@ -315,7 +315,7 @@ export default function HomeScreen({ navigation }) {
 const s = StyleSheet.create({
   safe:    { flex: 1, backgroundColor: colors.background },
   scroll:  { flex: 1 },
-  content: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: TAB_BAR_HEIGHT + 16 },
+  content: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 32 },
 
   header: {
     flexDirection: 'row', alignItems: 'center',

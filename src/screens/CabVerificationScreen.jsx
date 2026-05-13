@@ -30,7 +30,7 @@ export default function CabVerificationScreen({ navigation }) {
       provider:      provider,
       vehicleModel:  notes.trim(), // notes field doubles as model/extra info
     }));
-    navigation.navigate('RouteComparison', { travelMode: 'cab' });
+    navigation.navigate('Main', { screen: 'Routes', params: { travelMode: 'cab' } });
   };
 
   return (
