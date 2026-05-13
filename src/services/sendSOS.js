@@ -1,6 +1,7 @@
 import * as SMS from 'expo-sms';
 import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
 
 /** Load emergency contacts from AsyncStorage. */
 export async function getEmergencyContacts() {
@@ -9,6 +10,36 @@ export async function getEmergencyContacts() {
     if (raw) return JSON.parse(raw);
   } catch (_) {}
   return [];
+}
+
+/**
+ * Fetch current GPS coordinates.
+ * Requests foreground permission safely.
+ * Returns { lat, lng, coordString, mapsLink } or falls back to null.
+ */
+export async function getLiveLocation() {
+  try {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') return null;
+
+    const loc = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.High,
+      timeInterval: 5000,
+      distanceInterval: 0,
+    });
+
+    const lat = loc.coords.latitude.toFixed(6);
+    const lng = loc.coords.longitude.toFixed(6);
+
+    return {
+      lat,
+      lng,
+      coordString: `${lat}° N, ${lng}° E`,
+      mapsLink: `https://maps.google.com/?q=${lat},${lng}`,
+    };
+  } catch (_) {
+    return null;
+  }
 }
 
 /** Call the first emergency contact via native dialer. */
@@ -73,14 +104,31 @@ export async function sendSOS() {
       if (raw) cabDetails = JSON.parse(raw);
     } catch (_) {}
 
-    const coords = '28.5494° N, 77.2001° E';
-    const mapsLink = `https://maps.google.com/?q=28.5494,77.2001`;
+    // Get real GPS coordinates — fall back to last known if unavailable
+    let coordString = 'Location unavailable';
+    let mapsLink    = 'https://maps.google.com/';
+    try {
+      const loc = await getLiveLocation();
+      if (loc) {
+        coordString = loc.coordString;
+        mapsLink    = loc.mapsLink;
+      } else {
+        // Try last known location as fallback
+        const last = await Location.getLastKnownPositionAsync();
+        if (last) {
+          const lat = last.coords.latitude.toFixed(6);
+          const lng = last.coords.longitude.toFixed(6);
+          coordString = `${lat}° N, ${lng}° E`;
+          mapsLink    = `https://maps.google.com/?q=${lat},${lng}`;
+        }
+      }
+    } catch (_) {}
 
     let message =
       `Emergency alert from ${userName}.\n` +
       `I may be in danger.\n\n` +
       `Current Location:\n${mapsLink}\n` +
-      `Coordinates: ${coords}\n\n` +
+      `Coordinates: ${coordString}\n\n` +
       `Travel Mode: ${travelMode}\n`;
 
     // Append cab details only in cab mode

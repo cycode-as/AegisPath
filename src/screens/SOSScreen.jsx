@@ -20,7 +20,7 @@ import Animated, {
   withDelay,
   Easing,
 } from 'react-native-reanimated';
-import { sendSOS, callFirstContact, getEmergencyContacts, call112 } from '../services/sendSOS';
+import { sendSOS, callFirstContact, getEmergencyContacts, call112, getLiveLocation } from '../services/sendSOS';
 import { useRouteStore } from '../stores/useRouteStore';
 
 // ─── Phase definitions ────────────────────────────────────────────────────────
@@ -118,11 +118,14 @@ export default function SOSScreen({ navigation }) {
   const [allDone, setAllDone]             = useState(false);
   const [safeConfirmed, setSafeConfirmed] = useState(false);
   const [contacts, setContacts]           = useState([]);
+  const [liveCoords, setLiveCoords]       = useState(null); // real GPS coords
   const setSosActive = useRouteStore((s) => s.setSosActive);
 
-  // Load stored emergency contacts on mount
+  // Load contacts and start fetching GPS immediately on mount
   useEffect(() => {
     getEmergencyContacts().then(setContacts);
+    // Fetch GPS during the 3-second countdown so it's ready when SMS fires
+    getLiveLocation().then(loc => { if (loc) setLiveCoords(loc); });
   }, []);
 
   // Build contact names string for display
@@ -239,7 +242,7 @@ export default function SOSScreen({ navigation }) {
 
         {/* Share location nudge */}
         <Text style={styles.shareNudge}>
-          📍 Location shared with your emergency contacts
+          📍 {liveCoords ? liveCoords.coordString : 'Location shared with your emergency contacts'}
         </Text>
       </View>
     );
@@ -299,7 +302,7 @@ export default function SOSScreen({ navigation }) {
           <StatusRow
             icon="📍"
             title="Live tracking activated"
-            sub="28.5494° N, 77.2001° E"
+            sub={liveCoords ? liveCoords.coordString : 'Fetching location…'}
             visible={phasesDone.includes('tracking')}
             done={phasesDone.includes('tracking')}
           />

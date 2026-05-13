@@ -10,7 +10,7 @@
  *  - Shake-to-SOS
  */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import {
   StyleSheet,
   Modal,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Polyline, Marker } from 'react-native-maps';
@@ -28,6 +29,9 @@ import { useShakeToSOS } from '../hooks/useShakeToSOS';
 import { colors, getRiskColor } from '../config/colors';
 import { useRouteStore } from '../stores/useRouteStore';
 import { call112 } from '../services/sendSOS';
+import { getDynamicRoutes } from '../services/routingEngine';
+import { getNearestPoliceStation } from '../services/policeStationService';
+import * as Location from 'expo-location';
 
 // ─── Polyline color by risk level ────────────────────────────────────────────
 function getPolylineColor(riskLevel) {
@@ -58,18 +62,81 @@ function getRegionForCoords(coords) {
 
 // ─── NavigationScreen ────────────────────────────────────────────────────────
 export default function NavigationScreen({ navigation }) {
-  const { selectedRoute, routeCoords: storeCoords, source, destination } = useRouteStore();
+  const {
+    selectedRoute, routeCoords: storeCoords,
+    source, destination, destCoords,
+    timeMode, travelMode, setRouteCoords,
+  } = useRouteStore();
 
+  // ── State — declared BEFORE any useMemo that references them ──
+  const [dotIndex, setDotIndex]             = useState(0);
+  const [alertVisible, setAlertVisible]     = useState(false);
+  const [rerouteVisible, setRerouteVisible] = useState(false);
+  const [policeVisible, setPoliceVisible]   = useState(false);
+  const [isRerouting, setIsRerouting]       = useState(false);
+  const [rerouteCoords, setRerouteCoords]   = useState(null);
+
+  // Police station — fetched once on mount from GPS + Overpass API
+  const [policeStation, setPoliceStation]   = useState(null);
+  const [policeLoading, setPoliceLoading]   = useState(false);
+
+  // Refs
+  const mapRef        = useRef(null);
+  const isMounted     = useRef(true);   // memory-leak guard
+  const rerouteInFlight = useRef(false); // race-condition guard
+  const intervalRef   = useRef(null);   // dot interval ref for restart after reroute
+
+  // Cleanup on unmount
+  useEffect(() => {
+    isMounted.current = true;
+    return () => { isMounted.current = false; };
+  }, []);
+
+  // ── Fetch nearest police station once on mount ──
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setPoliceLoading(true);
+      try {
+        // Try to get GPS; use route start as fallback
+        let lat, lon;
+        try {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status === 'granted') {
+            const loc = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Balanced,
+            });
+            lat = loc.coords.latitude;
+            lon = loc.coords.longitude;
+          }
+        } catch (_) {}
+
+        // Fallback: use first route coordinate
+        if ((lat == null || lon == null) && ROUTE_COORDS?.length > 0) {
+          [lat, lon] = ROUTE_COORDS[0];
+        }
+
+        if (lat == null || lon == null) return;
+
+        const station = await getNearestPoliceStation(lat, lon);
+        if (!cancelled && isMounted.current) {
+          setPoliceStation(station);
+        }
+      } catch (_) {
+        // Silent — never crash navigation
+      } finally {
+        if (!cancelled && isMounted.current) setPoliceLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []); // run once on mount — ROUTE_COORDS may not be set yet, handled by fallback
+
+  // ── Active route coords — rerouteCoords takes priority ──
   const ROUTE_COORDS = useMemo(() => {
+    if (rerouteCoords && rerouteCoords.length >= 2) return rerouteCoords;
     if (storeCoords && storeCoords.length >= 2) return storeCoords;
     return null;
-  }, [storeCoords]);
-
-  const [dotIndex, setDotIndex]           = useState(0);
-  const [alertVisible, setAlertVisible]   = useState(false);
-  const [rerouteVisible, setRerouteVisible] = useState(false);
-  const [policeVisible, setPoliceVisible] = useState(false);
-  const mapRef = useRef(null);
+  }, [rerouteCoords, storeCoords]);
 
   const currentZone = selectedRoute ? {
     name: selectedRoute.label,
@@ -97,18 +164,25 @@ export default function NavigationScreen({ navigation }) {
   const initialRegion = useMemo(() => getRegionForCoords(ROUTE_COORDS), [ROUTE_COORDS]);
 
   // ── Step dot along route every 800ms ──
+  // Uses intervalRef so it can be cleanly restarted after rerouting
   useEffect(() => {
     if (!ROUTE_COORDS || ROUTE_COORDS.length === 0) return;
-    // Step every N points to simulate smooth movement on long routes
     const stepSize = Math.max(1, Math.floor(ROUTE_COORDS.length / 60));
-    const interval = setInterval(() => {
+
+    // Clear any existing interval before starting a new one
+    if (intervalRef.current) clearInterval(intervalRef.current);
+
+    intervalRef.current = setInterval(() => {
       setDotIndex(prev => {
         const next = prev + stepSize;
         return next >= ROUTE_COORDS.length ? ROUTE_COORDS.length - 1 : next;
       });
     }, 800);
-    return () => clearInterval(interval);
-  }, [ROUTE_COORDS]);
+
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [ROUTE_COORDS]); // restarts whenever ROUTE_COORDS changes (i.e. after reroute)
 
   // ── Camera follows the dot ──
   useEffect(() => {
@@ -135,6 +209,75 @@ export default function NavigationScreen({ navigation }) {
     const region = getRegionForCoords(ROUTE_COORDS);
     mapRef.current?.animateToRegion(region, 500);
   };
+
+  // ── Adaptive rerouting — fetch new route from current dot position ──
+  const handleReroute = useCallback(async () => {
+    // Prevent concurrent calls
+    if (rerouteInFlight.current) return;
+    rerouteInFlight.current = true;
+
+    if (isMounted.current) setIsRerouting(true);
+
+    try {
+      // Read current coords and dotIndex via functional updater to avoid stale closure
+      let currentDotIndex = 0;
+      setDotIndex(prev => { currentDotIndex = prev; return prev; });
+
+      // Small yield to let the state read settle
+      await new Promise(r => setTimeout(r, 0));
+
+      const activeCoords = rerouteCoords?.length >= 2 ? rerouteCoords
+        : storeCoords?.length >= 2 ? storeCoords : null;
+
+      const currentPos = activeCoords?.[currentDotIndex] ?? activeCoords?.[0];
+
+      if (!currentPos || !destCoords) {
+        if (isMounted.current) { setRerouteVisible(false); setIsRerouting(false); }
+        rerouteInFlight.current = false;
+        return;
+      }
+
+      const newStart = { lat: currentPos[0], lon: currentPos[1] };
+      const newRoutes = await getDynamicRoutes(newStart, destCoords, timeMode, travelMode);
+
+      // Component may have unmounted during the API call
+      if (!isMounted.current) { rerouteInFlight.current = false; return; }
+
+      if (!newRoutes || newRoutes.length === 0) {
+        setRerouteVisible(false);
+        setIsRerouting(false);
+        rerouteInFlight.current = false;
+        return;
+      }
+
+      // Pick the safest route
+      const safest = newRoutes.reduce((best, r) =>
+        r.safetyScore > best.safetyScore ? r : best, newRoutes[0]);
+
+      const newCoords = safest.routeCoords;
+
+      // Reset dot to 0 BEFORE updating coords so the interval restart
+      // (triggered by ROUTE_COORDS change) starts from the correct position
+      setDotIndex(0);
+      setRerouteCoords(newCoords);
+      setRouteCoords(newCoords); // keep store in sync
+
+      // Delay camera animation slightly so the polyline re-renders first,
+      // avoiding a visual conflict with the dot-follow camera animation
+      setTimeout(() => {
+        if (!isMounted.current) return;
+        const region = getRegionForCoords(newCoords);
+        mapRef.current?.animateToRegion(region, 700);
+      }, 100);
+
+    } catch (_) {
+      // Silent fallback — never crash during navigation
+      if (isMounted.current) { setRerouteVisible(false); setIsRerouting(false); }
+    } finally {
+      rerouteInFlight.current = false;
+      if (isMounted.current) { setIsRerouting(false); setRerouteVisible(false); }
+    }
+  }, [rerouteCoords, storeCoords, destCoords, timeMode, travelMode]);
 
   const routeLabel = selectedRoute
     ? `${selectedRoute.emoji} ${selectedRoute.label}`
@@ -341,15 +484,21 @@ export default function NavigationScreen({ navigation }) {
                 style={styles.rerouteDismiss}
                 onPress={() => setRerouteVisible(false)}
                 activeOpacity={0.7}
+                disabled={isRerouting}
               >
                 <Text style={styles.rerouteDismissText}>Stay on route</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.rerouteAccept}
-                onPress={() => setRerouteVisible(false)}
+                style={[styles.rerouteAccept, isRerouting && { opacity: 0.7 }]}
+                onPress={handleReroute}
                 activeOpacity={0.85}
+                disabled={isRerouting}
               >
-                <Text style={styles.rerouteAcceptText}>Rerouting →</Text>
+                {isRerouting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.rerouteAcceptText}>Rerouting →</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -371,17 +520,43 @@ export default function NavigationScreen({ navigation }) {
                 <Text style={styles.policeModalClose}>✕</Text>
               </TouchableOpacity>
             </View>
-            {[
-              { icon: '🏢', label: 'Station', value: 'Nearest PCR Unit' },
-              { icon: '📞', label: 'Contact', value: '112 (Emergency)' },
-              { icon: '🕐', label: 'Response', value: '~4 minutes' },
-            ].map((row, i) => (
-              <View key={i} style={[styles.policeModalRow, i > 0 && styles.policeModalRowBorder]}>
-                <Text style={styles.policeModalIcon}>{row.icon}</Text>
-                <Text style={styles.policeModalLabel}>{row.label}</Text>
-                <Text style={styles.policeModalValue}>{row.value}</Text>
+
+            {policeLoading ? (
+              <View style={styles.policeLoadingWrap}>
+                <ActivityIndicator size="small" color={colors.brand} />
+                <Text style={styles.policeLoadingText}>Finding nearest station…</Text>
               </View>
-            ))}
+            ) : (
+              <>
+                {[
+                  {
+                    icon: '🏢',
+                    label: 'Station',
+                    value: policeStation?.name ?? 'Nearest PCR Unit',
+                  },
+                  {
+                    icon: '📏',
+                    label: 'Distance',
+                    value: policeStation?.distance ?? 'Calculating…',
+                  },
+                  {
+                    icon: '🕐',
+                    label: 'ETA',
+                    value: policeStation?.eta ?? '~4 min',
+                  },
+                  ...(policeStation?.phone
+                    ? [{ icon: '📞', label: 'Phone', value: policeStation.phone }]
+                    : [{ icon: '📞', label: 'Emergency', value: '112' }]),
+                ].map((row, i) => (
+                  <View key={i} style={[styles.policeModalRow, i > 0 && styles.policeModalRowBorder]}>
+                    <Text style={styles.policeModalIcon}>{row.icon}</Text>
+                    <Text style={styles.policeModalLabel}>{row.label}</Text>
+                    <Text style={styles.policeModalValue} numberOfLines={2}>{row.value}</Text>
+                  </View>
+                ))}
+              </>
+            )}
+
             <TouchableOpacity
               style={styles.policeCallBtn}
               onPress={() => { setPoliceVisible(false); call112(); }}
@@ -589,6 +764,18 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   policeCallBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+  policeLoadingWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 20,
+    justifyContent: 'center',
+  },
+  policeLoadingText: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
 
   // Zone alert
   alertBackdrop: {
