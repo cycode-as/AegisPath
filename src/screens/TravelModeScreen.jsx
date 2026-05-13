@@ -33,7 +33,7 @@ export default function TravelModeScreen({ navigation }) {
     if (selected === 'cab') {
       navigation.navigate('CabVerification');
     } else {
-      navigation.navigate('Main', { screen: 'Routes', params: { travelMode: selected } });
+      navigation.navigate('RouteComparison', { travelMode: selected });
     }
   };
 

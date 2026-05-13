@@ -1,18 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
-  StyleSheet, StatusBar, ScrollView, FlatList,
-  ActivityIndicator,
+  StyleSheet, StatusBar, ScrollView,
+  ActivityIndicator, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
 import { colors } from '../config/colors';
-import { TAB_BAR_HEIGHT } from '../config/layout';
-import { searchLocations } from '../services/locationSearch';
+import { searchLocations, reverseGeocode } from '../services/locationSearch';
 import { useRouteStore } from '../stores/useRouteStore';
-
-const DEMO_SOURCE = 'Connaught Place, Delhi';
-const DEMO_DEST   = 'Lajpat Nagar Metro';
 
 const QUICK_CHIPS = [
   { key: 'home',      icon: '🏠', label: 'Home'    },
@@ -22,29 +19,32 @@ const QUICK_CHIPS = [
 ];
 
 export default function HomeScreen({ navigation }) {
-  const [userName, setUserName]           = useState('');
-  const [source, setSource]               = useState(DEMO_SOURCE);
-  const [destination, setDestination]     = useState(DEMO_DEST);
-  const [activeField, setActiveField]     = useState(null); // 'source' | 'dest'
-  const [suggestions, setSuggestions]     = useState([]);
-  const [searching, setSearching]         = useState(false);
+  const [userName, setUserName]             = useState('');
+  const [source, setSource]                 = useState('');
+  const [destination, setDestination]       = useState('');
+  const [sourceCoords, setSourceCoords]     = useState(null);
+  const [destCoords, setDestCoords]         = useState(null);
+  const [activeField, setActiveField]       = useState(null);
+  const [suggestions, setSuggestions]       = useState([]);
+  const [searching, setSearching]           = useState(false);
   const [savedLocations, setSavedLocations] = useState({});
   const [recentSearches, setRecentSearches] = useState([]);
+  const [fetchingGPS, setFetchingGPS]       = useState(false);
   const searchTimer = useRef(null);
 
+  const setTripContext = useRouteStore(s => s.setTripContext);
+  const setUserLocation = useRouteStore(s => s.setUserLocation);
+
   useEffect(() => {
-    // Load user profile
     AsyncStorage.getItem('@aegispath_user_profile').then(raw => {
       if (raw) {
         const p = JSON.parse(raw);
         if (p.name) setUserName(p.name.split(' ')[0]);
       }
     });
-    // Load saved locations
     AsyncStorage.getItem('@aegispath_trusted_locations').then(raw => {
       if (raw) setSavedLocations(JSON.parse(raw));
     });
-    // Load recent searches
     AsyncStorage.getItem('@aegispath_recent_searches').then(raw => {
       if (raw) setRecentSearches(JSON.parse(raw));
     });
@@ -61,10 +61,15 @@ export default function HomeScreen({ navigation }) {
     navigation.replace('Onboarding');
   };
 
-  // Debounced search
+  // ── Debounced search ──
   const handleTextChange = (text, field) => {
-    if (field === 'source') setSource(text);
-    else setDestination(text);
+    if (field === 'source') {
+      setSource(text);
+      setSourceCoords(null);
+    } else {
+      setDestination(text);
+      setDestCoords(null);
+    }
 
     clearTimeout(searchTimer.current);
     if (text.length < 2) { setSuggestions([]); return; }
@@ -79,8 +84,15 @@ export default function HomeScreen({ navigation }) {
 
   const selectSuggestion = async (item) => {
     const label = item.label;
-    if (activeField === 'source') setSource(label);
-    else setDestination(label);
+    const coords = (item.lat && item.lon) ? { lat: item.lat, lon: item.lon } : null;
+
+    if (activeField === 'source') {
+      setSource(label);
+      setSourceCoords(coords);
+    } else {
+      setDestination(label);
+      setDestCoords(coords);
+    }
     setSuggestions([]);
     setActiveField(null);
 
@@ -90,23 +102,75 @@ export default function HomeScreen({ navigation }) {
     await AsyncStorage.setItem('@aegispath_recent_searches', JSON.stringify(updated));
   };
 
+  // ── Current Location via GPS ──
+  const handleCurrentLocation = async () => {
+    setFetchingGPS(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Location permission is needed to use this feature.');
+        setFetchingGPS(false);
+        return;
+      }
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const coords = { lat: loc.coords.latitude, lon: loc.coords.longitude };
+      
+      // Store in global state
+      setUserLocation(coords);
+
+      // Reverse geocode for display
+      const label = await reverseGeocode(coords.lat, coords.lon);
+
+      if (activeField === 'source' || !activeField) {
+        setSource(label);
+        setSourceCoords(coords);
+      } else {
+        setDestination(label);
+        setDestCoords(coords);
+      }
+      setSuggestions([]);
+      setActiveField(null);
+    } catch (e) {
+      Alert.alert('Location Error', 'Could not fetch your location. Please try again.');
+    }
+    setFetchingGPS(false);
+  };
+
   const applyQuickChip = (chipKey) => {
-    const addr = savedLocations[chipKey];
-    if (!addr) return;
-    if (activeField === 'source') setSource(addr);
-    else setDestination(addr);
+    const saved = savedLocations[chipKey];
+    if (!saved) return;
+    // savedLocations may store { label, lat, lon } or just a string
+    if (typeof saved === 'object' && saved.lat) {
+      if (activeField === 'source' || !activeField) {
+        setSource(saved.label || saved.address || chipKey);
+        setSourceCoords({ lat: saved.lat, lon: saved.lon });
+      } else {
+        setDestination(saved.label || saved.address || chipKey);
+        setDestCoords({ lat: saved.lat, lon: saved.lon });
+      }
+    } else {
+      // Legacy string address — no coords
+      if (activeField === 'source') setSource(saved);
+      else setDestination(saved);
+    }
     setSuggestions([]);
   };
 
-  const setTripContext = useRouteStore(s => s.setTripContext);
-
   const handleFindRoute = () => {
     if (!source.trim() || !destination.trim()) return;
-    setTripContext(source.trim(), destination.trim());
+    if (!sourceCoords || !destCoords) {
+      Alert.alert(
+        'Missing Coordinates',
+        'Please select locations from the search suggestions to get accurate routing.'
+      );
+      return;
+    }
+    setTripContext(source.trim(), destination.trim(), sourceCoords, destCoords);
     navigation.navigate('TravelMode');
   };
 
   const showDropdown = activeField !== null && (suggestions.length > 0 || searching || recentSearches.length > 0);
+  const canSearch = source.trim().length > 0 && destination.trim().length > 0 && sourceCoords && destCoords;
 
   return (
     <SafeAreaView style={s.safe}>
@@ -147,7 +211,7 @@ export default function HomeScreen({ navigation }) {
             Navigate safer, not just faster — AI-powered safe route planning.
           </Text>
           <View style={s.aiBadge}>
-            <Text style={s.aiBadgeText}>✦ AI Safety Engine • Online</Text>
+            <Text style={s.aiBadgeText}>✦ AegisPath Safety Engine • Online</Text>
           </View>
           <TouchableOpacity
             style={s.reportRow}
@@ -182,7 +246,10 @@ export default function HomeScreen({ navigation }) {
               />
             </View>
             {source.length > 0 && (
-              <TouchableOpacity onPress={() => { setSource(''); setActiveField('source'); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <TouchableOpacity
+                onPress={() => { setSource(''); setSourceCoords(null); setActiveField('source'); }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
                 <Text style={s.clearBtn}>✕</Text>
               </TouchableOpacity>
             )}
@@ -211,7 +278,10 @@ export default function HomeScreen({ navigation }) {
               />
             </View>
             {destination.length > 0 && (
-              <TouchableOpacity onPress={() => { setDestination(''); setActiveField('dest'); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <TouchableOpacity
+                onPress={() => { setDestination(''); setDestCoords(null); setActiveField('dest'); }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
                 <Text style={s.clearBtn}>✕</Text>
               </TouchableOpacity>
             )}
@@ -268,16 +338,17 @@ export default function HomeScreen({ navigation }) {
             contentContainerStyle={s.chipsContent}
           >
             <TouchableOpacity
-              style={s.chip}
-              onPress={() => {
-                if (activeField === 'source') setSource('My Current Location');
-                else setDestination('My Current Location');
-                setSuggestions([]);
-              }}
+              style={[s.chip, s.chipGPS]}
+              onPress={handleCurrentLocation}
               activeOpacity={0.7}
+              disabled={fetchingGPS}
             >
-              <Text style={s.chipIcon}>📡</Text>
-              <Text style={s.chipText}>Current</Text>
+              {fetchingGPS ? (
+                <ActivityIndicator size={14} color={colors.brand} />
+              ) : (
+                <Text style={s.chipIcon}>📡</Text>
+              )}
+              <Text style={s.chipText}>{fetchingGPS ? 'Locating…' : 'My Location'}</Text>
             </TouchableOpacity>
             {QUICK_CHIPS.map(chip => {
               const addr = savedLocations[chip.key];
@@ -297,10 +368,10 @@ export default function HomeScreen({ navigation }) {
           </ScrollView>
 
           <TouchableOpacity
-            style={[s.cta, (!source.trim() || !destination.trim()) && s.ctaDisabled]}
+            style={[s.cta, !canSearch && s.ctaDisabled]}
             onPress={handleFindRoute}
             activeOpacity={0.85}
-            disabled={!source.trim() || !destination.trim()}
+            disabled={!canSearch}
           >
             <Text style={s.ctaText}>Find Safe Route →</Text>
           </TouchableOpacity>
@@ -432,6 +503,10 @@ const s = StyleSheet.create({
     backgroundColor: '#F0F4FF',
     borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7,
     borderWidth: 1, borderColor: '#C7D2FE',
+  },
+  chipGPS: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
   },
   chipIcon: { fontSize: 14 },
   chipText: { fontSize: 12, fontWeight: '600', color: colors.brand },

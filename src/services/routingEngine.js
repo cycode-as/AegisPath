@@ -1,86 +1,114 @@
-import { calcRiskScore } from '../utils/calcRiskScore';
+/**
+ * routingEngine.js — Dynamic route fetching via OSRM public API.
+ *
+ * Fetches real routes with alternatives, decodes geometry,
+ * and enriches each route with safety confidence scores from
+ * the routeScoringEngine.
+ */
+
+import { scoreRoute, buildZoneFromScore } from './routeScoringEngine';
 import narratives from '../../assets/data/narratives.json';
 import badges from '../../assets/data/badges.json';
 
+// OSRM profiles: 'driving', 'walking', 'cycling'
+const PROFILE_MAP = {
+  walking: 'foot',
+  driving: 'car',
+  cab: 'car',
+};
+
 /**
  * Fetch routes from public OSRM API.
- * Uses coordinates: [lat, lon] for start and end.
- * OSRM expects: lon,lat;lon,lat
+ * @param {number} startLat
+ * @param {number} startLon
+ * @param {number} endLat
+ * @param {number} endLon
+ * @param {string} travelMode - 'walking' | 'driving' | 'cab'
  */
-export const fetchOSRMData = async (startLat, startLon, endLat, endLon) => {
-  const url = `https://router.project-osrm.org/route/v1/driving/${startLon},${startLat};${endLon},${endLat}?alternatives=true&geometries=geojson&overview=full`;
+export const fetchOSRMData = async (startLat, startLon, endLat, endLon, travelMode = 'driving') => {
+  const profile = PROFILE_MAP[travelMode] || 'car';
+  const url = `https://router.project-osrm.org/route/v1/${profile}/${startLon},${startLat};${endLon},${endLat}?alternatives=true&geometries=geojson&overview=full`;
+  
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'AegisPath/1.0' }
+    headers: { 'User-Agent': 'AegisPath/1.0' },
   });
-  if (!res.ok) throw new Error('Failed to fetch routing data');
+  
+  if (!res.ok) throw new Error(`Routing API error (${res.status})`);
   return res.json();
 };
 
-const generateHeuristicZone = (distanceMeters, isAlternative) => {
-  // Simulate intelligent zone analysis by deriving pseudo-random metrics based on distance
-  // This satisfies the "believable intelligence" requirement for dynamic routes.
-  const baseCrime = isAlternative ? 30 : 60;
-  const crimeLevel = Math.min(100, Math.max(0, baseCrime + ((distanceMeters % 100) - 50) * 0.4));
-  
-  const crowdOptions = ['busy', 'moderate', 'isolated'];
-  const crowdIdx = Math.floor((distanceMeters / 1000) + (isAlternative ? 1 : 0)) % 3;
-  const crowdLevel = crowdOptions[crowdIdx];
-
-  const infraOptions = ['full', 'mixed', 'poor'];
-  const infraIdx = Math.floor((distanceMeters / 1500) + (isAlternative ? 0 : 2)) % 3;
-  const infraLevel = infraOptions[infraIdx];
-
-  return { crimeLevel, crowdLevel, infraLevel };
-};
-
-const enrichDynamicRoute = (routeData, index, timeMode) => {
+/**
+ * Enrich a single OSRM route with safety analysis.
+ */
+const enrichRoute = (routeData, index, timeMode) => {
   const timeHour = timeMode === 'night' ? 21 : 14;
   const isAlternative = index > 0;
-  const distance = routeData.distance; // in meters
-  const duration = Math.round(routeData.duration / 60); // in minutes
-  
-  const zone = generateHeuristicZone(distance, isAlternative);
-  const { riskScore, safetyScore, riskLevel, factors } = calcRiskScore(zone, timeHour);
+  const distanceMeters = routeData.distance;
+  const durationSeconds = routeData.duration;
+  const duration = Math.round(durationSeconds / 60);
 
-  // Map OSRM [lon, lat] to Leaflet [lat, lon]
+  // Map OSRM [lon, lat] → [lat, lon] for react-native-maps
   const coordinates = routeData.geometry.coordinates.map(([lon, lat]) => [lat, lon]);
 
-  // Use pre-existing narratives and badges from mock to maintain emotional UX polish
+  // Run through safety confidence engine
+  const analysis = scoreRoute({
+    distanceMeters,
+    durationSeconds,
+    coordsCount: coordinates.length,
+    hour: timeHour,
+    isAlternative,
+  });
+
+  // Build zone for Time Impact screen compatibility
+  const zone = buildZoneFromScore(analysis.factors);
+
+  // Select narratives and badges
   const routeKey = isAlternative ? 'routeB' : 'routeA';
-  const isRecommended = isAlternative ? false : true;
+  const isRecommended = !isAlternative;
 
   return {
-    id: `dyn_${index}`,
-    label: isAlternative ? 'Alternative Route' : 'Safest Route',
+    id: `route_${index}`,
+    label: isAlternative ? 'Alternative' : 'Recommended',
     emoji: isAlternative ? '📍' : '✅',
-    eta: `${duration} min`,
-    distance: `${(distance / 1000).toFixed(1)} km`,
+    duration: `${duration} min`,
+    distance: `${(distanceMeters / 1000).toFixed(1)} km`,
     isRecommended,
     timeHour,
-    safetyScore,
-    riskScore,
-    riskLevel,
-    factors,
+    safetyScore: analysis.safetyScore,
+    riskScore: analysis.riskScore,
+    riskLevel: analysis.riskLevel,
+    roadType: analysis.roadType,
+    factors: {
+      crime: Math.round((100 - analysis.factors.crowd) * 0.4),
+      time:  Math.round((100 - analysis.factors.time) * 0.25),
+      crowd: Math.round((100 - analysis.factors.crowd) * 0.2),
+      infra: Math.round((100 - analysis.factors.emergency) * 0.15),
+    },
+    confidenceFactors: analysis.factors,
     zone,
     routeCoords: coordinates,
-    narrative: narratives[routeKey][timeMode],
-    badges: badges[routeKey][timeMode],
+    narrative: narratives[routeKey]?.[timeMode] || 'Route analysis based on environmental factors.',
+    badges: badges[routeKey]?.[timeMode] || [],
   };
 };
 
-export const getDynamicRoutes = async (start, end, timeMode = 'night') => {
-  if (!start || !end) {
-    return []; // Return empty or throw, we need coords
-  }
-  
-  const data = await fetchOSRMData(start.lat, start.lon, end.lat, end.lon);
-  
-  if (!data.routes || data.routes.length === 0) {
-    throw new Error('No routes found');
+/**
+ * Fetch and enrich dynamic routes.
+ * @param {{ lat: number, lon: number }} start
+ * @param {{ lat: number, lon: number }} end
+ * @param {string} timeMode - 'day' | 'night'
+ * @param {string} travelMode - 'walking' | 'driving' | 'cab'
+ */
+export const getDynamicRoutes = async (start, end, timeMode = 'night', travelMode = 'walking') => {
+  if (!start?.lat || !start?.lon || !end?.lat || !end?.lon) {
+    throw new Error('Source and destination coordinates are required');
   }
 
-  // Enrich routes
-  const enriched = data.routes.map((r, i) => enrichDynamicRoute(r, i, timeMode));
-  
-  return enriched;
+  const data = await fetchOSRMData(start.lat, start.lon, end.lat, end.lon, travelMode);
+
+  if (!data.routes || data.routes.length === 0) {
+    throw new Error('No routes found between these locations');
+  }
+
+  return data.routes.map((r, i) => enrichRoute(r, i, timeMode));
 };

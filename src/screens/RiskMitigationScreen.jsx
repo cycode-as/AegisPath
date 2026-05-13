@@ -142,7 +142,7 @@ export default function RiskMitigationScreen({ navigation }) {
         {/* CTA */}
         <TouchableOpacity
           style={s.ctaBtn}
-          onPress={() => navigation.navigate('Main', { screen: 'Routes' })}
+          onPress={() => navigation.navigate('RouteComparison')}
           activeOpacity={0.85}
         >
           <Text style={s.ctaBtnText}>View Routes Anyway →</Text>

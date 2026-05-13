@@ -1,26 +1,26 @@
 /**
- * NavigationScreen — Phase 4 (P1)
+ * NavigationScreen — Native Map Navigation
  *
- * Shows a Leaflet/OpenStreetMap map with:
- *  - Hardcoded route polyline (green = safe route)
- *  - Animated dot stepping along the route every 800ms
- *  - Safety indicator bar at the top
- *  - Zone alert popup after 5 seconds
- *  - Floating SOS button
- *
- * No GPS. No API key. Always works.
+ * Uses react-native-maps for native rendering with:
+ *  - Dynamic route polyline from OSRM
+ *  - Animated position marker stepping along route
+ *  - Safety indicator bar
+ *  - Zone alerts, reroute alerts, police modal
+ *  - Floating SOS + recenter buttons
+ *  - Shake-to-SOS
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   Modal,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { WebView } from 'react-native-webview';
+import MapView, { Polyline, Marker } from 'react-native-maps';
 import * as Haptics from 'expo-haptics';
 import SOSButton from '../components/SOSButton';
 import ShakeSOSAlert from '../components/ShakeSOSAlert';
@@ -29,169 +29,155 @@ import { colors, getRiskColor } from '../config/colors';
 import { useRouteStore } from '../stores/useRouteStore';
 import { call112 } from '../services/sendSOS';
 
-// ---------------------------------------------------------------------------
-// Demo fallback coordinates (used only when no dynamic route is available)
-// ---------------------------------------------------------------------------
-const DEMO_COORDS = [
-  [28.6315, 77.2167],
-  [28.6280, 77.2210],
-  [28.6230, 77.2270],
-  [28.6170, 77.2330],
-  [28.6090, 77.2380],
-  [28.5990, 77.2400],
-  [28.5700, 77.2410],
-];
-
-// ---------------------------------------------------------------------------
-// Leaflet HTML — self-contained, no external dependencies beyond CDN tiles
-// ---------------------------------------------------------------------------
-function buildLeafletHTML(coords, dotIndex) {
-  const coordsJson = JSON.stringify(coords);
-  const dot = coords[dotIndex];
-
-  return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body, #map { width: 100%; height: 100%; }
-  </style>
-</head>
-<body>
-  <div id="map"></div>
-  <script>
-    var coords = ${coordsJson};
-    var map = L.map('map', { zoomControl: false, attributionControl: false });
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 18
-    }).addTo(map);
-
-    // Draw route polyline in green
-    var polyline = L.polyline(coords, { color: '#22C55E', weight: 5, opacity: 0.85 }).addTo(map);
-    map.fitBounds(polyline.getBounds(), { padding: [40, 40] });
-
-    // Start marker
-    L.circleMarker(coords[0], {
-      radius: 8, fillColor: '#6366F1', color: '#fff',
-      weight: 2, fillOpacity: 1
-    }).addTo(map).bindPopup('Start').openPopup();
-
-    // End marker
-    L.circleMarker(coords[coords.length - 1], {
-      radius: 8, fillColor: '#EF4444', color: '#fff',
-      weight: 2, fillOpacity: 1
-    }).addTo(map);
-
-    // Animated dot
-    var dotIcon = L.divIcon({
-      className: '',
-      html: '<div style="width:16px;height:16px;background:#6366F1;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.4)"></div>',
-      iconSize: [16, 16],
-      iconAnchor: [8, 8],
-    });
-    var dot = L.marker([${dot[0]}, ${dot[1]}], { icon: dotIcon }).addTo(map);
-
-    // Listen for dot position updates from React Native
-    document.addEventListener('message', function(e) {
-      try {
-        var data = JSON.parse(e.data);
-        if (data.type === 'UPDATE_DOT') {
-          dot.setLatLng([data.lat, data.lng]);
-        }
-      } catch(_) {}
-    });
-    window.addEventListener('message', function(e) {
-      try {
-        var data = JSON.parse(e.data);
-        if (data.type === 'UPDATE_DOT') {
-          dot.setLatLng([data.lat, data.lng]);
-        }
-      } catch(_) {}
-    });
-  </script>
-</body>
-</html>
-  `;
+// ─── Polyline color by risk level ────────────────────────────────────────────
+function getPolylineColor(riskLevel) {
+  if (riskLevel === 'LOW') return '#22C55E';
+  if (riskLevel === 'MODERATE') return '#F59E0B';
+  return '#EF4444';
 }
 
-// ---------------------------------------------------------------------------
-// NavigationScreen
-// ---------------------------------------------------------------------------
+// ─── Convert [lat, lon] array to region ──────────────────────────────────────
+function getRegionForCoords(coords) {
+  if (!coords || coords.length === 0) {
+    return { latitude: 28.6139, longitude: 77.2090, latitudeDelta: 0.05, longitudeDelta: 0.05 };
+  }
+  let minLat = coords[0][0], maxLat = coords[0][0];
+  let minLon = coords[0][1], maxLon = coords[0][1];
+  coords.forEach(([lat, lon]) => {
+    minLat = Math.min(minLat, lat);
+    maxLat = Math.max(maxLat, lat);
+    minLon = Math.min(minLon, lon);
+    maxLon = Math.max(maxLon, lon);
+  });
+  const midLat = (minLat + maxLat) / 2;
+  const midLon = (minLon + maxLon) / 2;
+  const deltaLat = (maxLat - minLat) * 1.4 + 0.005;
+  const deltaLon = (maxLon - minLon) * 1.4 + 0.005;
+  return { latitude: midLat, longitude: midLon, latitudeDelta: deltaLat, longitudeDelta: deltaLon };
+}
+
+// ─── NavigationScreen ────────────────────────────────────────────────────────
 export default function NavigationScreen({ navigation }) {
   const { selectedRoute, routeCoords: storeCoords, source, destination } = useRouteStore();
 
-  // Use dynamic coords from store if available, otherwise fall back to demo
-  const ROUTE_COORDS = (storeCoords && storeCoords.length >= 2) ? storeCoords : DEMO_COORDS;
+  const ROUTE_COORDS = useMemo(() => {
+    if (storeCoords && storeCoords.length >= 2) return storeCoords;
+    return null;
+  }, [storeCoords]);
+
   const [dotIndex, setDotIndex]           = useState(0);
   const [alertVisible, setAlertVisible]   = useState(false);
   const [rerouteVisible, setRerouteVisible] = useState(false);
   const [policeVisible, setPoliceVisible] = useState(false);
-  const webViewRef = useRef(null);
+  const mapRef = useRef(null);
 
   const currentZone = selectedRoute ? {
     name: selectedRoute.label,
     safetyScore: selectedRoute.safetyScore,
-    riskLevel: selectedRoute.riskLevel
+    riskLevel: selectedRoute.riskLevel,
   } : {
-    name: 'Unknown',
+    name: 'Route',
     safetyScore: 50,
-    riskLevel: 'MODERATE'
+    riskLevel: 'MODERATE',
   };
-  const zoneColor   = getRiskColor(currentZone.riskLevel);
+  const zoneColor = getRiskColor(currentZone.riskLevel);
+  const polylineColor = getPolylineColor(currentZone.riskLevel);
 
   const { shakeDetected, countdown, cancelShakeSOS } = useShakeToSOS(() => {
     navigation.navigate('SOS');
   });
 
-  // Step dot along route every 800ms and update WebView
+  // ── Polyline data for MapView ──
+  const polylineCoords = useMemo(() => {
+    if (!ROUTE_COORDS) return [];
+    return ROUTE_COORDS.map(([lat, lon]) => ({ latitude: lat, longitude: lon }));
+  }, [ROUTE_COORDS]);
+
+  // ── Initial region ──
+  const initialRegion = useMemo(() => getRegionForCoords(ROUTE_COORDS), [ROUTE_COORDS]);
+
+  // ── Step dot along route every 800ms ──
   useEffect(() => {
+    if (!ROUTE_COORDS || ROUTE_COORDS.length === 0) return;
+    // Step every N points to simulate smooth movement on long routes
+    const stepSize = Math.max(1, Math.floor(ROUTE_COORDS.length / 60));
     const interval = setInterval(() => {
       setDotIndex(prev => {
-        const next = Math.min(prev + 1, ROUTE_COORDS.length - 1);
-        return next;
+        const next = prev + stepSize;
+        return next >= ROUTE_COORDS.length ? ROUTE_COORDS.length - 1 : next;
       });
     }, 800);
     return () => clearInterval(interval);
-  }, [ROUTE_COORDS.length]);
+  }, [ROUTE_COORDS]);
 
-  // Send updated dot position to WebView whenever dotIndex changes
+  // ── Camera follows the dot ──
   useEffect(() => {
-    const [lat, lng] = ROUTE_COORDS[dotIndex] ?? ROUTE_COORDS[0];
-    const js = `
-      (function() {
-        var e = new MessageEvent('message', {
-          data: JSON.stringify({ type: 'UPDATE_DOT', lat: ${lat}, lng: ${lng} })
-        });
-        document.dispatchEvent(e);
-        window.dispatchEvent(e);
-      })();
-      true;
-    `;
-    webViewRef.current?.injectJavaScript(js);
+    if (!ROUTE_COORDS || ROUTE_COORDS.length === 0) return;
+    const [lat, lon] = ROUTE_COORDS[dotIndex] || ROUTE_COORDS[0];
+    mapRef.current?.animateToRegion({
+      latitude: lat,
+      longitude: lon,
+      latitudeDelta: 0.008,
+      longitudeDelta: 0.008,
+    }, 600);
   }, [dotIndex]);
 
-  // Zone alert fires after 5 seconds
+  // ── Zone alert after 5s, reroute after 10s ──
   useEffect(() => {
     const t1 = setTimeout(() => setAlertVisible(true), 5000);
-    // Adaptive rerouting alert fires after 10 seconds (simulates unsafe zone detection)
     const t2 = setTimeout(() => setRerouteVisible(true), 10000);
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, []);
 
+  // ── Recenter to full route ──
+  const handleRecenter = () => {
+    if (!ROUTE_COORDS || ROUTE_COORDS.length === 0) return;
+    const region = getRegionForCoords(ROUTE_COORDS);
+    mapRef.current?.animateToRegion(region, 500);
+  };
+
   const routeLabel = selectedRoute
     ? `${selectedRoute.emoji} ${selectedRoute.label}`
-    : '✅ Safest Route';
+    : '✅ Route';
 
-  const safetyScore = selectedRoute?.safetyScore ?? 81;
+  const safetyScore = selectedRoute?.safetyScore ?? 50;
+
+  // Current dot position
+  const dotPosition = ROUTE_COORDS && ROUTE_COORDS[dotIndex]
+    ? { latitude: ROUTE_COORDS[dotIndex][0], longitude: ROUTE_COORDS[dotIndex][1] }
+    : null;
+
+  // Start and end markers
+  const startCoord = ROUTE_COORDS && ROUTE_COORDS.length > 0
+    ? { latitude: ROUTE_COORDS[0][0], longitude: ROUTE_COORDS[0][1] }
+    : null;
+  const endCoord = ROUTE_COORDS && ROUTE_COORDS.length > 1
+    ? { latitude: ROUTE_COORDS[ROUTE_COORDS.length - 1][0], longitude: ROUTE_COORDS[ROUTE_COORDS.length - 1][1] }
+    : null;
+
+  if (!ROUTE_COORDS) {
+    return (
+      <View style={styles.container}>
+        <SafeAreaView style={[styles.safetyBar, { backgroundColor: colors.brand }]}>
+          <View style={styles.safetyBarInner}>
+            <Text style={styles.safetyBarText}>No route data available</Text>
+          </View>
+        </SafeAreaView>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ fontSize: 16, color: '#64748B' }}>Please select a route first.</Text>
+          <TouchableOpacity
+            style={{ marginTop: 16, padding: 14, backgroundColor: colors.brand, borderRadius: 12 }}
+            onPress={() => navigation.goBack()}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700' }}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
-
       {/* Safety indicator bar */}
       <SafeAreaView style={[styles.safetyBar, { backgroundColor: zoneColor }]}>
         <View style={styles.safetyBarInner}>
@@ -205,16 +191,55 @@ export default function NavigationScreen({ navigation }) {
         </View>
       </SafeAreaView>
 
-      {/* Leaflet map — uses dynamic route coords */}
-      <WebView
-        ref={webViewRef}
+      {/* Native map */}
+      <MapView
+        ref={mapRef}
         style={styles.map}
-        originWhitelist={['*']}
-        source={{ html: buildLeafletHTML(ROUTE_COORDS, 0) }}
-        javaScriptEnabled
-        domStorageEnabled
-        scrollEnabled={false}
-      />
+        initialRegion={initialRegion}
+        showsUserLocation={false}
+        showsMyLocationButton={false}
+        showsCompass={false}
+        toolbarEnabled={false}
+        mapType="standard"
+      >
+        {/* Route polyline */}
+        {polylineCoords.length > 0 && (
+          <Polyline
+            coordinates={polylineCoords}
+            strokeColor={polylineColor}
+            strokeWidth={5}
+            lineCap="round"
+            lineJoin="round"
+          />
+        )}
+
+        {/* Start marker */}
+        {startCoord && (
+          <Marker coordinate={startCoord} anchor={{ x: 0.5, y: 0.5 }}>
+            <View style={styles.markerStart}>
+              <Text style={styles.markerEmoji}>📍</Text>
+            </View>
+          </Marker>
+        )}
+
+        {/* End marker */}
+        {endCoord && (
+          <Marker coordinate={endCoord} anchor={{ x: 0.5, y: 0.5 }}>
+            <View style={styles.markerEnd}>
+              <Text style={styles.markerEmoji}>🚩</Text>
+            </View>
+          </Marker>
+        )}
+
+        {/* Animated position dot */}
+        {dotPosition && (
+          <Marker coordinate={dotPosition} anchor={{ x: 0.5, y: 0.5 }}>
+            <View style={styles.animDot}>
+              <View style={styles.animDotInner} />
+            </View>
+          </Marker>
+        )}
+      </MapView>
 
       {/* Floating SOS button */}
       <SOSButton
@@ -227,12 +252,7 @@ export default function NavigationScreen({ navigation }) {
       {/* Map recenter button */}
       <TouchableOpacity
         style={styles.recenterBtn}
-        onPress={() => {
-          // Re-inject fitBounds to recenter map on route
-          webViewRef.current?.injectJavaScript(`
-            (function() { map.fitBounds(polyline.getBounds(), { padding: [40, 40] }); })(); true;
-          `);
-        }}
+        onPress={handleRecenter}
         activeOpacity={0.8}
       >
         <Text style={styles.recenterIcon}>⊕</Text>
@@ -246,6 +266,26 @@ export default function NavigationScreen({ navigation }) {
       >
         <Text style={styles.policeBtnIcon}>🚔</Text>
       </TouchableOpacity>
+
+      {/* Route info card at bottom */}
+      <View style={styles.routeInfoCard}>
+        <View style={styles.routeInfoRow}>
+          <Text style={styles.routeInfoLabel}>{routeLabel}</Text>
+          <View style={[styles.routeInfoBadge, { backgroundColor: zoneColor }]}>
+            <Text style={styles.routeInfoBadgeText}>{safetyScore}</Text>
+          </View>
+        </View>
+        {source && destination && (
+          <Text style={styles.routeInfoSub} numberOfLines={1}>
+            {source} → {destination}
+          </Text>
+        )}
+        {selectedRoute && (
+          <Text style={styles.routeInfoMeta}>
+            {selectedRoute.duration}  ·  {selectedRoute.distance}
+          </Text>
+        )}
+      </View>
 
       {/* Zone alert modal */}
       <Modal
@@ -315,6 +355,7 @@ export default function NavigationScreen({ navigation }) {
           </View>
         </View>
       </Modal>
+
       {/* Police assistance modal */}
       <Modal
         visible={policeVisible}
@@ -331,11 +372,9 @@ export default function NavigationScreen({ navigation }) {
               </TouchableOpacity>
             </View>
             {[
-              { icon: '🏢', label: 'Station', value: 'Connaught Place PCR' },
-              { icon: '📍', label: 'Address', value: 'Baba Kharak Singh Marg, CP' },
-              { icon: '📞', label: 'Contact', value: '011-23412345' },
-              { icon: '🕐', label: 'ETA',     value: '~4 minutes' },
-              { icon: '📏', label: 'Distance', value: '0.8 km away' },
+              { icon: '🏢', label: 'Station', value: 'Nearest PCR Unit' },
+              { icon: '📞', label: 'Contact', value: '112 (Emergency)' },
+              { icon: '🕐', label: 'Response', value: '~4 minutes' },
             ].map((row, i) => (
               <View key={i} style={[styles.policeModalRow, i > 0 && styles.policeModalRowBorder]}>
                 <Text style={styles.policeModalIcon}>{row.icon}</Text>
@@ -392,6 +431,89 @@ const styles = StyleSheet.create({
   map: {
     flex: 1,
   },
+
+  /* Markers */
+  markerStart: {
+    backgroundColor: '#EEF2FF',
+    borderRadius: 20,
+    padding: 4,
+    borderWidth: 2,
+    borderColor: '#6366F1',
+  },
+  markerEnd: {
+    backgroundColor: '#FEE2E2',
+    borderRadius: 20,
+    padding: 4,
+    borderWidth: 2,
+    borderColor: '#EF4444',
+  },
+  markerEmoji: { fontSize: 16 },
+
+  /* Animated dot */
+  animDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(99, 102, 241, 0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  animDotInner: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#6366F1',
+    borderWidth: 2.5,
+    borderColor: '#FFFFFF',
+  },
+
+  /* Route info card */
+  routeInfoCard: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 100 : 80,
+    left: 16,
+    right: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  routeInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  routeInfoLabel: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  routeInfoBadge: {
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  routeInfoBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  routeInfoSub: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 2,
+  },
+  routeInfoMeta: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+
   /* Recenter button */
   recenterBtn: {
     position: 'absolute',
@@ -414,7 +536,7 @@ const styles = StyleSheet.create({
   /* Police floating button */
   policeBtn: {
     position: 'absolute',
-    bottom: 110,
+    bottom: 250,
     right: 20,
     width: 44,
     height: 44,
@@ -467,6 +589,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   policeCallBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+
   // Zone alert
   alertBackdrop: {
     flex: 1,

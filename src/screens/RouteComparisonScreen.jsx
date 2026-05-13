@@ -75,7 +75,7 @@ function RouteDetailSheet() {
           {riskLevel} • {detectedCount} factor{detectedCount !== 1 ? 's' : ''} detected
         </Text>
         <Text style={sheet.riskBannerSub}>
-          Our AI scanned crime, lighting, crowd & temporal data along the {label.toLowerCase()} route.
+          AegisPath analyzed crowd, lighting, isolation & emergency data along the {label.toLowerCase()} route.
         </Text>
       </View>
 
@@ -146,15 +146,23 @@ const sheet = StyleSheet.create({
 // ─── RouteComparisonScreen ────────────────────────────────────────────────────
 export default function RouteComparisonScreen({ navigation }) {
   const {
-    routes, isLoading, timeMode,
+    routes, isLoading, timeMode, error, source, destination,
+    sourceCoords, destCoords,
     fetchRoutes, setTimeMode, setSelectedRoute,
   } = useRouteStore();
 
   const bottomSheetRef = useRef(null);
   const [noSafeRouteDismissed, setNoSafeRouteDismissed] = useState(false);
 
-  // Initial fetch only — setTimeMode handles re-fetches on toggle
-  useEffect(() => { fetchRoutes(); }, []);
+  // Guard: if no coordinates, can't fetch routes
+  const hasCoords = sourceCoords && destCoords;
+
+  // Fetch routes on mount when coordinates are available
+  useEffect(() => {
+    if (hasCoords) {
+      fetchRoutes();
+    }
+  }, []);
 
   // Detect if all routes are high risk
   const allHighRisk = routes.length > 0 && routes.every(r => r.riskLevel === 'HIGH');
@@ -180,7 +188,6 @@ export default function RouteComparisonScreen({ navigation }) {
     <GestureHandlerRootView style={s.root}>
       <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
 
-      {/* SafeAreaView from react-native-safe-area-context fills correctly on Android */}
       <SafeAreaView style={s.safe} edges={['top', 'left', 'right']}>
         <OfflineBanner />
 
@@ -196,14 +203,29 @@ export default function RouteComparisonScreen({ navigation }) {
 
           <View style={s.headerCenter}>
             <Text style={s.title}>Route Comparison</Text>
-            <Text style={s.subtitle}>Fastest vs Safest</Text>
+            <Text style={s.subtitle} numberOfLines={1}>
+              {source && destination ? `${source.split(',')[0]} → ${destination.split(',')[0]}` : 'Safest vs Fastest'}
+            </Text>
           </View>
 
           <DayNightToggle timeMode={timeMode} onToggle={setTimeMode} />
         </View>
 
-        {/* ── Route list ── */}
-        {isLoading ? (
+        {/* ── No coordinates guard ── */}
+        {!hasCoords ? (
+          <View style={s.emptyState}>
+            <Text style={s.emptyIcon}>📍</Text>
+            <Text style={s.emptyTitle}>No trip selected</Text>
+            <Text style={s.emptySub}>Please search for source and destination to compare routes.</Text>
+            <TouchableOpacity
+              style={s.emptyBtn}
+              onPress={() => navigation.navigate('Home')}
+              activeOpacity={0.85}
+            >
+              <Text style={s.emptyBtnText}>← Go to Search</Text>
+            </TouchableOpacity>
+          </View>
+        ) : isLoading ? (
           <ScrollView
             style={s.scroll}
             contentContainerStyle={s.listContent}
@@ -212,6 +234,32 @@ export default function RouteComparisonScreen({ navigation }) {
             <View testID="skeleton-card"><SkeletonCard /></View>
             <View testID="skeleton-card"><SkeletonCard /></View>
           </ScrollView>
+        ) : error ? (
+          <View style={s.emptyState}>
+            <Text style={s.emptyIcon}>⚠️</Text>
+            <Text style={s.emptyTitle}>Route Error</Text>
+            <Text style={s.emptySub}>{error}</Text>
+            <TouchableOpacity
+              style={s.emptyBtn}
+              onPress={fetchRoutes}
+              activeOpacity={0.85}
+            >
+              <Text style={s.emptyBtnText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : routes.length === 0 ? (
+          <View style={s.emptyState}>
+            <Text style={s.emptyIcon}>🔍</Text>
+            <Text style={s.emptyTitle}>No routes found</Text>
+            <Text style={s.emptySub}>Could not find routes between these locations.</Text>
+            <TouchableOpacity
+              style={s.emptyBtn}
+              onPress={fetchRoutes}
+              activeOpacity={0.85}
+            >
+              <Text style={s.emptyBtnText}>Try Again</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
           <>
             {showNoSafeRoute && (
@@ -320,6 +368,43 @@ const s = StyleSheet.create({
     paddingTop: 4,
     paddingBottom: 110,
   },
+
+  /* Empty states */
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  emptyIcon: {
+    fontSize: 48,
+    marginBottom: 12,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+    marginBottom: 6,
+  },
+  emptySub: {
+    fontSize: 14,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  emptyBtn: {
+    backgroundColor: colors.brand,
+    borderRadius: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 32,
+  },
+  emptyBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+
   sheetBg: {
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 24,
