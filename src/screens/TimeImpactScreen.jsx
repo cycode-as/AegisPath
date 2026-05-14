@@ -152,7 +152,7 @@ export default function TimeImpactScreen({ navigation, route: navRoute }) {
 
   // Smart recommendation
   const recommendation = best.safetyScore >= 80
-    ? `Travel between ${formatHour(best.hour)} for the safest experience. Safety score peaks at ${best.safetyScore}.`
+    ? `Travel between ${formatHour(best.hour)} for the safest experience. Safety Confidence peaks at ${best.safetyScore}.`
     : `Avoid travelling after ${formatHour(worst.hour)}. Consider the ${formatHour(best.hour)} window instead.`;
 
   return (

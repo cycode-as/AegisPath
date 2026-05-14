@@ -29,7 +29,7 @@ import { useShakeToSOS } from '../hooks/useShakeToSOS';
 import { colors, getRiskColor } from '../config/colors';
 import { useRouteStore } from '../stores/useRouteStore';
 import { call112 } from '../services/sendSOS';
-import { getDynamicRoutes } from '../services/routingEngine';
+import { getDynamicRoutes, getAlternativeRoute } from '../services/routingEngine';
 import { getNearestPoliceStation } from '../services/policeStationService';
 import * as Location from 'expo-location';
 
@@ -210,20 +210,16 @@ export default function NavigationScreen({ navigation }) {
     mapRef.current?.animateToRegion(region, 500);
   };
 
-  // ── Adaptive rerouting — fetch new route from current dot position ──
+  // ── Adaptive rerouting — fetch a geometrically different route ──
   const handleReroute = useCallback(async () => {
-    // Prevent concurrent calls
     if (rerouteInFlight.current) return;
     rerouteInFlight.current = true;
-
     if (isMounted.current) setIsRerouting(true);
 
     try {
-      // Read current coords and dotIndex via functional updater to avoid stale closure
+      // Read dotIndex without stale closure
       let currentDotIndex = 0;
       setDotIndex(prev => { currentDotIndex = prev; return prev; });
-
-      // Small yield to let the state read settle
       await new Promise(r => setTimeout(r, 0));
 
       const activeCoords = rerouteCoords?.length >= 2 ? rerouteCoords
@@ -238,40 +234,39 @@ export default function NavigationScreen({ navigation }) {
       }
 
       const newStart = { lat: currentPos[0], lon: currentPos[1] };
-      const newRoutes = await getDynamicRoutes(newStart, destCoords, timeMode, travelMode);
 
-      // Component may have unmounted during the API call
+      // Use getAlternativeRoute — passes current geometry so the engine
+      // can score by divergence and avoid returning the same polyline
+      const alternative = await getAlternativeRoute(
+        newStart,
+        destCoords,
+        timeMode,
+        travelMode,
+        activeCoords, // current route geometry for divergence scoring
+      );
+
       if (!isMounted.current) { rerouteInFlight.current = false; return; }
 
-      if (!newRoutes || newRoutes.length === 0) {
-        setRerouteVisible(false);
-        setIsRerouting(false);
+      if (!alternative?.routeCoords?.length) {
+        if (isMounted.current) { setRerouteVisible(false); setIsRerouting(false); }
         rerouteInFlight.current = false;
         return;
       }
 
-      // Pick the safest route
-      const safest = newRoutes.reduce((best, r) =>
-        r.safetyScore > best.safetyScore ? r : best, newRoutes[0]);
+      const newCoords = alternative.routeCoords;
 
-      const newCoords = safest.routeCoords;
-
-      // Reset dot to 0 BEFORE updating coords so the interval restart
-      // (triggered by ROUTE_COORDS change) starts from the correct position
+      // Reset dot before updating coords so the interval restarts cleanly
       setDotIndex(0);
       setRerouteCoords(newCoords);
-      setRouteCoords(newCoords); // keep store in sync
+      setRouteCoords(newCoords);
 
-      // Delay camera animation slightly so the polyline re-renders first,
-      // avoiding a visual conflict with the dot-follow camera animation
+      // Delay camera to let polyline re-render first
       setTimeout(() => {
         if (!isMounted.current) return;
-        const region = getRegionForCoords(newCoords);
-        mapRef.current?.animateToRegion(region, 700);
+        mapRef.current?.animateToRegion(getRegionForCoords(newCoords), 700);
       }, 100);
 
     } catch (_) {
-      // Silent fallback — never crash during navigation
       if (isMounted.current) { setRerouteVisible(false); setIsRerouting(false); }
     } finally {
       rerouteInFlight.current = false;
@@ -328,7 +323,7 @@ export default function NavigationScreen({ navigation }) {
             <View style={[styles.pulsingDotCore, { backgroundColor: '#fff' }]} />
           </View>
           <Text style={styles.safetyBarText}>
-            {currentZone.name}  ·  Safety {currentZone.safetyScore}/100
+            {currentZone.name}  ·  Confidence {currentZone.safetyScore}/100
           </Text>
           <Text style={styles.safetyBarRisk}>{currentZone.riskLevel}</Text>
         </View>
@@ -642,12 +637,12 @@ const styles = StyleSheet.create({
     borderColor: '#FFFFFF',
   },
 
-  /* Route info card */
+  /* Route info card — positioned above SOS button (64h + 32 bottom + 16 gap = 112) */
   routeInfoCard: {
     position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 100 : 80,
+    bottom: Platform.OS === 'ios' ? 128 : 112,
     left: 16,
-    right: 16,
+    right: 88, // leave right gap so SOS button (right:20, w:64) is never covered
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 14,
@@ -689,10 +684,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  /* Recenter button */
+  /* Recenter button — above route info card */
   recenterBtn: {
     position: 'absolute',
-    bottom: 190,
+    bottom: Platform.OS === 'ios' ? 260 : 240,
     right: 20,
     width: 44,
     height: 44,
@@ -708,10 +703,10 @@ const styles = StyleSheet.create({
   },
   recenterIcon: { fontSize: 22, color: colors.brand },
 
-  /* Police floating button */
+  /* Police floating button — above recenter */
   policeBtn: {
     position: 'absolute',
-    bottom: 250,
+    bottom: Platform.OS === 'ios' ? 316 : 296,
     right: 20,
     width: 44,
     height: 44,

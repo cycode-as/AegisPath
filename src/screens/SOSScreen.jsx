@@ -9,7 +9,7 @@
  * Done:    Confirmation screen
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, StatusBar } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -20,7 +20,7 @@ import Animated, {
   withDelay,
   Easing,
 } from 'react-native-reanimated';
-import { sendSOS, callFirstContact, getEmergencyContacts, call112, getLiveLocation } from '../services/sendSOS';
+import { sendSOS, callFirstContact, getEmergencyContacts, getLiveLocation, startCallEscalation } from '../services/sendSOS';
 import { useRouteStore } from '../stores/useRouteStore';
 
 // ─── Phase definitions ────────────────────────────────────────────────────────
@@ -118,7 +118,8 @@ export default function SOSScreen({ navigation }) {
   const [allDone, setAllDone]             = useState(false);
   const [safeConfirmed, setSafeConfirmed] = useState(false);
   const [contacts, setContacts]           = useState([]);
-  const [liveCoords, setLiveCoords]       = useState(null); // real GPS coords
+  const [liveCoords, setLiveCoords]       = useState(null);
+  const cancelCallsRef = useRef(null); // cleanup for call escalation timers
   const setSosActive = useRouteStore((s) => s.setSosActive);
 
   // Load contacts and start fetching GPS immediately on mount
@@ -149,34 +150,45 @@ export default function SOSScreen({ navigation }) {
     transform: [{ scale: circleScale.value }],
   }));
 
-  // Countdown: 3 → 2 → 1 → start flow
+  // Countdown: 3 → 2 → 1 → start full escalation flow
   useEffect(() => {
     const t1 = setTimeout(() => setCountdown(2), 1000);
     const t2 = setTimeout(() => setCountdown(1), 2000);
     const t3 = setTimeout(() => {
       setCountdown(null);
-      // Send SMS to all stored contacts
+
+      // 1. Open SMS composer with all contacts pre-filled (user presses Send once)
       sendSOS();
-      // Call the first contact immediately
-      callFirstContact();
-      // Reveal phases sequentially
+
+      // 2. Start sequential call escalation AFTER a short delay
+      //    so the SMS composer has time to open first
+      setTimeout(() => {
+        cancelCallsRef.current = startCallEscalation();
+      }, 1500);
+
+      // 3. Reveal status phases sequentially
       PHASES.forEach((p) => {
         setTimeout(() => {
           setPhasesDone(prev => [...prev, p.id]);
         }, p.delay);
       });
-      // Call 112 after contacts phase (2.6s)
-      setTimeout(() => call112(), 2600);
-      // Done after all phases
+
+      // 4. Mark done after all phases
       setTimeout(() => setAllDone(true), 4400);
     }, 3000);
-    return () => [t1, t2, t3].forEach(clearTimeout);
+
+    return () => {
+      [t1, t2, t3].forEach(clearTimeout);
+      // Cancel pending call escalation timers if user cancels
+      if (cancelCallsRef.current) cancelCallsRef.current();
+    };
   }, []);
 
   const handleImSafe = () => {
+    // Cancel any pending call escalation timers
+    if (cancelCallsRef.current) cancelCallsRef.current();
     setSafeConfirmed(true);
     setSosActive(false);
-    // Brief emotional closure, then navigate home
     setTimeout(() => navigation.navigate('Home'), 2200);
   };
 
@@ -231,10 +243,10 @@ export default function SOSScreen({ navigation }) {
           <Text style={styles.safeBtnText}>I'm Safe Now</Text>
         </TouchableOpacity>
 
-        {/* Call Again */}
+        {/* Call Again — retries contact 1 immediately */}
         <TouchableOpacity
           style={styles.callAgainBtn}
-          onPress={callFirstContact}
+          onPress={() => callFirstContact()}
           activeOpacity={0.85}
         >
           <Text style={styles.callAgainText}>📞 Call Again — {firstContactName}</Text>
@@ -287,7 +299,7 @@ export default function SOSScreen({ navigation }) {
         <View style={styles.statusCard}>
           <StatusRow
             icon="👥"
-            title="Alerting trusted contacts…"
+            title="SMS alert sent to all contacts"
             sub={contactNames}
             visible={phasesDone.includes('contacts')}
             done={phasesDone.includes('contacts')}

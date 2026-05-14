@@ -45,7 +45,7 @@ export default function RouteCard({ route, onSeeWhy, onNavigate, onTimeImpact })
           <Text style={styles.metaText}>🕐 {duration}  ·  {distance}</Text>
         </View>
         <View style={styles.scoreBlock}>
-          <Text style={styles.safetyLabel}>SAFETY</Text>
+          <Text style={styles.safetyLabel}>Safety Confidence</Text>
           <Text style={[styles.scoreNum, { color: scoreColor }]}>{displayScore}</Text>
         </View>
       </View>
@@ -173,10 +173,10 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   safetyLabel: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
     color: '#64748B',
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
   },
   scoreNum: {
     fontSize: 30,

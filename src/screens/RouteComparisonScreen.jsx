@@ -70,7 +70,7 @@ function RouteDetailSheet() {
       <Text style={sheet.sub}>Why this route may be unsafe</Text>
 
       <View style={[sheet.riskBanner, { backgroundColor: getRiskColor(riskLevel) }]}>
-        <Text style={sheet.riskBannerLabel}>OVERALL RISK</Text>
+        <Text style={sheet.riskBannerLabel}>SAFETY CONFIDENCE</Text>
         <Text style={sheet.riskBannerTitle}>
           {riskLevel} • {detectedCount} factor{detectedCount !== 1 ? 's' : ''} detected
         </Text>
