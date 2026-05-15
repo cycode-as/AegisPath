@@ -36,6 +36,55 @@ const FACTORS = [
   { label: 'Infra', key: 'infra' },
 ];
 
+// ─── Build "Why is this route safer?" bullet points ───────────────────────────
+function buildWhyPoints(route) {
+  const {
+    safetyScore = 50,
+    riskLevel = 'MODERATE',
+    confidenceFactors = {},
+    confidenceTags = [],
+    timeHour = 14,
+    factors = {},
+  } = route;
+
+  const points = [];
+  const isNight = timeHour >= 20 || timeHour < 6;
+  const safePOI    = confidenceFactors.safePOI    ?? 0;
+  const cautionPOI = confidenceFactors.cautionPOI ?? 0;
+  const emergency  = confidenceFactors.emergency  ?? 0;
+  const isolation  = confidenceFactors.isolation  ?? 0;
+  const incident   = confidenceFactors.incident   ?? 0;
+  const lighting   = confidenceFactors.lighting   ?? 0;
+  const crowd      = confidenceFactors.crowd      ?? 0;
+
+  if (safePOI >= 4)
+    points.push({ icon: '🏪', text: `${safePOI} safe public venues along route (cafes, transit, hospitals)`, positive: true });
+  if (cautionPOI === 0)
+    points.push({ icon: '✅', text: 'No nightlife or alcohol venues detected on this route', positive: true });
+  else if (cautionPOI > 0 && isNight)
+    points.push({ icon: '⚠', text: `${cautionPOI} nightlife/alcohol venue${cautionPOI > 1 ? 's' : ''} active after dark`, positive: false });
+  if (lighting >= 60)
+    points.push({ icon: '💡', text: 'Well-lit arterial roads throughout', positive: true });
+  else if (lighting < 35 && isNight)
+    points.push({ icon: '🌑', text: 'Limited lighting coverage after dark', positive: false });
+  if (emergency >= 50)
+    points.push({ icon: '🚑', text: 'Emergency services accessible within route corridor', positive: true });
+  if (isolation < 20)
+    points.push({ icon: '👥', text: 'Low isolation — populated stretches throughout', positive: true });
+  else if (isolation >= 40)
+    points.push({ icon: '🛤', text: 'Isolated stretches with limited foot traffic', positive: false });
+  if (incident < 10)
+    points.push({ icon: '📊', text: 'Lower historical incident exposure in this zone', positive: true });
+  else if (incident >= 20)
+    points.push({ icon: '📊', text: 'Elevated contextual incident signals in this area', positive: false });
+  if (crowd >= 60 && !isNight)
+    points.push({ icon: '🏙', text: 'Active public activity during travel hours', positive: true });
+  if (confidenceTags.includes('Active commercial zone'))
+    points.push({ icon: '🏬', text: 'Active commercial zone — higher natural surveillance', positive: true });
+
+  return points.slice(0, 5);
+}
+
 const SheetScrollView = BottomSheetScrollView || ScrollView;
 
 // ─── POI category definitions ─────────────────────────────────────────────────
@@ -123,6 +172,80 @@ function POIBreakdown({ confidenceFactors, confidenceTags, timeHour }) {
   );
 }
 
+// ─── Historical Incident Exposure row ────────────────────────────────────────
+// Shown inline in the factors card. Positive contribution when low, negative when high.
+function IncidentExposureRow({ value, timeHour }) {
+  const isNight = timeHour >= 20 || timeHour < 6;
+  // value is 0–30 raw. Convert to a signed contribution string.
+  const contribution = value === 0
+    ? '+0'
+    : value < 10
+    ? `+${Math.round((10 - value) / 2)}`   // low exposure = small positive
+    : `-${Math.round(value * 0.6)}`;         // high exposure = negative
+
+  const isPositive = value < 10;
+  const contribColor = isPositive ? '#15803D' : '#B91C1C';
+  const barFill = Math.round((value / 30) * 100);
+  const barColor = value < 10 ? '#22C55E' : value < 20 ? '#F59E0B' : '#EF4444';
+
+  const label = value === 0
+    ? 'No incident signals detected'
+    : value < 10
+    ? 'Low historical incident exposure'
+    : value < 20
+    ? 'Moderate incident signals in area'
+    : 'Elevated incident signals in area';
+
+  const sub = isNight && value >= 15
+    ? 'Night-time amplifies contextual risk signals'
+    : value < 10
+    ? 'Contextually low-risk zone'
+    : 'Based on environmental zone clustering';
+
+  return (
+    <View style={incRow.container}>
+      <View style={incRow.headerRow}>
+        <View style={[incRow.iconWrap, { backgroundColor: barColor + '22' }]}>
+          <Text style={incRow.icon}>📊</Text>
+        </View>
+        <View style={incRow.textBlock}>
+          <View style={incRow.labelRow}>
+            <Text style={incRow.label}>{label}</Text>
+            <Text style={[incRow.contribution, { color: contribColor }]}>{contribution}</Text>
+          </View>
+          <Text style={incRow.sub}>{sub}</Text>
+          <View style={incRow.track}>
+            <View style={[incRow.fill, { width: `${barFill}%`, backgroundColor: barColor }]} />
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+const incRow = StyleSheet.create({
+  container: { marginVertical: 8 },
+  headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  iconWrap: {
+    width: 40, height: 40, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center', marginTop: 2,
+  },
+  icon: { fontSize: 18 },
+  textBlock: { flex: 1 },
+  labelRow: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center', marginBottom: 2,
+  },
+  label: { fontSize: 14, fontWeight: '700', color: '#0F172A', flex: 1, marginRight: 8 },
+  contribution: { fontSize: 14, fontWeight: '800', flexShrink: 0 },
+  sub: { fontSize: 12, color: '#64748B', marginBottom: 6 },
+  track: {
+    height: 8, backgroundColor: '#E2E8F0',
+    borderRadius: 999, overflow: 'hidden',
+  },
+  fill: { height: '100%', borderRadius: 999 },
+});
+
 // ─── RouteDetailSheet ────────────────────────────────────────────────────────
 function RouteDetailSheet() {
   const selectedRoute = useRouteStore((s) => s.selectedRoute);
@@ -147,6 +270,9 @@ function RouteDetailSheet() {
     });
   }, [selectedRoute]);
 
+  // Must be declared before any early return — Rules of Hooks
+  const [showWhy, setShowWhy] = useState(false);
+
   if (!selectedRoute) return null;
 
   const {
@@ -162,6 +288,12 @@ function RouteDetailSheet() {
     timeHour = 14,
   } = selectedRoute;
   const detectedCount = FACTORS.filter(f => factors[f.key] >= 35).length;
+
+  // Incident exposure: stored in confidenceFactors.incident (0–30 scale)
+  const incidentRaw = confidenceFactors.incident ?? 0;
+
+  // "Why safer?" points
+  const whyPoints = buildWhyPoints(selectedRoute);
 
   return (
     <SheetScrollView contentContainerStyle={sheet.content}>
@@ -198,8 +330,36 @@ function RouteDetailSheet() {
         timeHour={timeHour}
       />
 
+      {/* ── Why is this route safer? ── */}
+      {whyPoints.length > 0 && (
+        <View style={sheet.whySection}>
+          <TouchableOpacity
+            style={sheet.whyHeader}
+            onPress={() => setShowWhy(v => !v)}
+            activeOpacity={0.75}
+          >
+            <Text style={sheet.whyHeaderText}>💡 Why did this route score {safetyScore}?</Text>
+            <Text style={sheet.whyChevron}>{showWhy ? '▲' : '▼'}</Text>
+          </TouchableOpacity>
+          {showWhy && (
+            <View style={sheet.whyBody}>
+              {whyPoints.map((pt, i) => (
+                <View key={i} style={sheet.whyRow}>
+                  <View style={[sheet.whyDot, { backgroundColor: pt.positive ? '#DCFCE7' : '#FEE2E2' }]}>
+                    <Text style={sheet.whyDotIcon}>{pt.icon}</Text>
+                  </View>
+                  <Text style={[sheet.whyText, { color: pt.positive ? '#15803D' : '#B91C1C' }]}>
+                    {pt.text}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
+
       <Text style={sheet.title}>Risk Analysis</Text>
-      <Text style={sheet.sub}>Why this route may be unsafe</Text>
+      <Text style={sheet.sub}>Environmental confidence factors</Text>
 
       <View style={[sheet.riskBanner, { backgroundColor: getRiskColor(riskLevel) }]}>
         <Text style={sheet.riskBannerLabel}>SAFETY CONFIDENCE</Text>
@@ -207,7 +367,7 @@ function RouteDetailSheet() {
           {riskLevel} • {detectedCount} factor{detectedCount !== 1 ? 's' : ''} detected
         </Text>
         <Text style={sheet.riskBannerSub}>
-          AegisPath analyzed crowd, lighting, isolation & emergency data along the {label.toLowerCase()} route.
+          AegisPath analyzed crowd quality, lighting, isolation & emergency access along the {label.toLowerCase()} route.
         </Text>
       </View>
 
@@ -217,6 +377,10 @@ function RouteDetailSheet() {
             <FactorBar label={fl} value={factors[key]} />
           </Animated.View>
         ))}
+        {/* Historical Incident Exposure — always shown, positive or negative contribution */}
+        <Animated.View style={animStyles[3]}>
+          <IncidentExposureRow value={incidentRaw} timeHour={timeHour} />
+        </Animated.View>
       </View>
     </SheetScrollView>
   );
@@ -426,6 +590,63 @@ const sheet = StyleSheet.create({
   tagText: {
     fontSize: 12,
     fontWeight: '600',
+  },
+
+  // ── Why is this route safer? ───────────────────────────────────────────────
+  whySection: {
+    marginBottom: 20,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    overflow: 'hidden',
+  },
+  whyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+  },
+  whyHeaderText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+    flex: 1,
+  },
+  whyChevron: {
+    fontSize: 11,
+    color: '#64748B',
+    marginLeft: 8,
+  },
+  whyBody: {
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  whyRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 4,
+  },
+  whyDot: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  whyDotIcon: { fontSize: 14 },
+  whyText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 18,
+    paddingTop: 6,
   },
 });
 

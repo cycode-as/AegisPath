@@ -75,6 +75,7 @@ export default function NavigationScreen({ navigation }) {
   const [policeVisible, setPoliceVisible]   = useState(false);
   const [isRerouting, setIsRerouting]       = useState(false);
   const [rerouteCoords, setRerouteCoords]   = useState(null);
+  const [floatAlert, setFloatAlert]         = useState(null); // { text, positive }
 
   // Police station — fetched once on mount from GPS + Overpass API
   const [policeStation, setPoliceStation]   = useState(null);
@@ -202,6 +203,53 @@ export default function NavigationScreen({ navigation }) {
     const t2 = setTimeout(() => setRerouteVisible(true), 10000);
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, []);
+
+  // ── Floating contextual alerts — derived from route intelligence ──
+  useEffect(() => {
+    if (!selectedRoute) return;
+    const { confidenceTags = [], confidenceFactors = {}, safetyScore = 50, timeHour = 14 } = selectedRoute;
+    const isNight = timeHour >= 20 || timeHour < 6;
+    const cautionPOI = confidenceFactors.cautionPOI ?? 0;
+    const safePOI    = confidenceFactors.safePOI    ?? 0;
+    const isolation  = confidenceFactors.isolation  ?? 0;
+    const lighting   = confidenceFactors.lighting   ?? 0;
+
+    // Build a queue of alerts to show sequentially
+    const queue = [];
+
+    if (cautionPOI >= 2 && isNight)
+      queue.push({ text: '⚠ Nightlife-heavy area ahead', positive: false });
+    else if (safetyScore < 45)
+      queue.push({ text: '⚠ Lower-confidence stretch detected', positive: false });
+
+    if (lighting < 35 && isNight)
+      queue.push({ text: '⚠ Limited lighting and surveillance', positive: false });
+    else if (safePOI >= 4)
+      queue.push({ text: '✓ Active commercial activity nearby', positive: true });
+
+    if (isolation >= 40)
+      queue.push({ text: '⚠ Isolated stretch — stay alert', positive: false });
+    else if (safetyScore >= 65)
+      queue.push({ text: '✓ Well-monitored corridor ahead', positive: true });
+
+    if (queue.length === 0) return;
+
+    // Show first alert after 7s, second after 18s
+    const timers = [];
+    queue.slice(0, 2).forEach((alert, i) => {
+      const delay = i === 0 ? 7000 : 18000;
+      timers.push(setTimeout(() => {
+        if (isMounted.current) {
+          setFloatAlert(alert);
+          setTimeout(() => {
+            if (isMounted.current) setFloatAlert(null);
+          }, 2800);
+        }
+      }, delay));
+    });
+
+    return () => timers.forEach(clearTimeout);
+  }, [selectedRoute]);
 
   // ── Recenter to full route ──
   const handleRecenter = () => {
@@ -500,6 +548,24 @@ export default function NavigationScreen({ navigation }) {
         </View>
       </Modal>
 
+      {/* ── Floating contextual alert — auto-dismisses, non-blocking ── */}
+      {floatAlert && (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.floatAlert,
+            floatAlert.positive ? styles.floatAlertSafe : styles.floatAlertCaution,
+          ]}
+        >
+          <Text style={[
+            styles.floatAlertText,
+            floatAlert.positive ? styles.floatAlertTextSafe : styles.floatAlertTextCaution,
+          ]}>
+            {floatAlert.text}
+          </Text>
+        </View>
+      )}
+
       {/* Police assistance modal */}
       <Modal
         visible={policeVisible}
@@ -771,6 +837,39 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontWeight: '500',
   },
+
+  /* Floating contextual alert — sits above route card, below SOS */
+  floatAlert: {
+    position: 'absolute',
+    bottom: 130,           // above routeInfoCard (32 + ~80 height + 18 gap)
+    left: 16,
+    right: 100,            // same right margin as routeInfoCard — avoids SOS button
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 5,
+  },
+  floatAlertSafe: {
+    backgroundColor: '#F0FFF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  floatAlertCaution: {
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+  },
+  floatAlertText: {
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  floatAlertTextSafe:    { color: '#15803D' },
+  floatAlertTextCaution: { color: '#92400E' },
 
   // Zone alert
   alertBackdrop: {

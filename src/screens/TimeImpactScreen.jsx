@@ -63,6 +63,36 @@ function getCrowdPattern(hour) {
   return { label: 'Isolated — high caution', icon: '🌑', safe: false };
 }
 
+// ─── Contextual confidence explanation for a given hour + route ──────────────
+function getHourlyExplanation(hour, zone, route) {
+  const cautionPOI = route?.confidenceFactors?.cautionPOI ?? 0;
+  const safePOI    = route?.confidenceFactors?.safePOI    ?? 0;
+  const incident   = route?.confidenceFactors?.incident   ?? 0;
+
+  const isDeepNight   = hour >= 22 || hour < 5;
+  const isLateEvening = hour >= 20;
+  const isMorning     = hour >= 6 && hour < 10;
+  const isMarketHours = hour >= 10 && hour < 18;
+
+  if (isDeepNight && cautionPOI >= 2)
+    return 'Confidence drops — nightlife venues active, reduced natural surveillance';
+  if (isDeepNight)
+    return 'Confidence drops after 11 PM due to reduced visibility and foot traffic';
+  if (isLateEvening && cautionPOI >= 1)
+    return 'Evening nightlife activity begins — caution zone pressure increases';
+  if (isLateEvening)
+    return 'Confidence reduces as crowds thin and lighting becomes less reliable';
+  if (isMorning && safePOI >= 3)
+    return 'Higher confidence — active commuter hours with commercial activity';
+  if (isMarketHours && safePOI >= 4)
+    return 'Higher confidence during active market hours — natural surveillance peaks';
+  if (isMarketHours)
+    return 'Daytime confidence — commercial activity and foot traffic at peak';
+  if (incident >= 20)
+    return 'Elevated contextual signals in this zone — stay aware regardless of time';
+  return 'Moderate confidence — standard environmental conditions';
+}
+
 // ─── Animated bar for the forecast chart ─────────────────────────────────────
 function ForecastBar({ safetyScore, riskLevel, hour, index, isSelected }) {
   const height = useSharedValue(0);
@@ -150,10 +180,23 @@ export default function TimeImpactScreen({ navigation, route: navRoute }) {
   const dayScore   = calcRiskScore(zone, 14);
   const nightScore = calcRiskScore(zone, 21);
 
-  // Smart recommendation
-  const recommendation = best.safetyScore >= 80
-    ? `Travel between ${formatHour(best.hour)} for the safest experience. Safety Confidence peaks at ${best.safetyScore}.`
-    : `Avoid travelling after ${formatHour(worst.hour)}. Consider the ${formatHour(best.hour)} window instead.`;
+  // Smart recommendation — contextual to route POI data
+  const cautionPOI = route?.confidenceFactors?.cautionPOI ?? 0;
+  const safePOI    = route?.confidenceFactors?.safePOI    ?? 0;
+  const incident   = route?.confidenceFactors?.incident   ?? 0;
+
+  let recommendation;
+  if (cautionPOI >= 2 && worst.hour >= 20) {
+    recommendation = `Avoid travelling after ${formatHour(worst.hour)} — nightlife activity on this route reduces Safety Confidence significantly. Best window: ${formatHour(best.hour)} (score: ${best.safetyScore}).`;
+  } else if (safePOI >= 4 && best.safetyScore >= 75) {
+    recommendation = `Travel between ${formatHour(best.hour)} for the highest confidence. Active commercial zones along this route provide natural surveillance during ${getTimeWindow(best.hour).toLowerCase()} hours.`;
+  } else if (incident >= 20) {
+    recommendation = `This zone has elevated contextual signals. Prefer ${formatHour(best.hour)} (score: ${best.safetyScore}) and avoid ${formatHour(worst.hour)} when environmental confidence is lowest.`;
+  } else if (best.safetyScore >= 80) {
+    recommendation = `Travel between ${formatHour(best.hour)} for the safest experience. Safety Confidence peaks at ${best.safetyScore}.`;
+  } else {
+    recommendation = `Avoid travelling after ${formatHour(worst.hour)}. Consider the ${formatHour(best.hour)} window instead (score: ${best.safetyScore}).`;
+  }
 
   return (
     <SafeAreaView style={s.safe} edges={['top', 'left', 'right']}>
@@ -270,14 +313,20 @@ export default function TimeImpactScreen({ navigation, route: navRoute }) {
           {[6, 9, 14, 19, 21, 23].map(h => {
             const pattern = getCrowdPattern(h);
             const { safetyScore } = calcRiskScore(zone, h);
+            const explanation = getHourlyExplanation(h, zone, route);
+            const isCurrentHour = h === currentHour;
             return (
-              <View key={h} style={s.patternRow}>
+              <View key={h} style={[s.patternRow, isCurrentHour && s.patternRowActive]}>
                 <View style={[s.patternIconWrap, { backgroundColor: pattern.safe ? colors.safeLight : colors.riskLight }]}>
                   <Text style={s.patternIcon}>{pattern.icon}</Text>
                 </View>
                 <View style={s.patternText}>
-                  <Text style={s.patternTime}>{formatHour(h)} — {getTimeWindow(h)}</Text>
+                  <Text style={s.patternTime}>
+                    {formatHour(h)} — {getTimeWindow(h)}
+                    {isCurrentHour ? '  ·  NOW' : ''}
+                  </Text>
                   <Text style={s.patternLabel}>{pattern.label}</Text>
+                  <Text style={s.patternExplanation} numberOfLines={2}>{explanation}</Text>
                 </View>
                 <Text style={[s.patternScore, { color: getRiskColor(safetyScore >= 80 ? 'LOW' : safetyScore >= 50 ? 'MODERATE' : 'HIGH') }]}>
                   {safetyScore}
@@ -490,6 +539,12 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
   },
+  patternRowActive: {
+    backgroundColor: '#F0F4FF',
+    borderRadius: 10,
+    marginHorizontal: -4,
+    paddingHorizontal: 4,
+  },
   patternIconWrap: {
     width: 36,
     height: 36,
@@ -502,6 +557,13 @@ const s = StyleSheet.create({
   patternText: { flex: 1 },
   patternTime: { fontSize: 12, fontWeight: '700', color: '#0F172A' },
   patternLabel: { fontSize: 11, color: '#64748B', marginTop: 1 },
+  patternExplanation: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 2,
+    lineHeight: 14,
+    fontStyle: 'italic',
+  },
   patternScore: { fontSize: 16, fontWeight: '800', flexShrink: 0 },
 
   /* AI recommendation */

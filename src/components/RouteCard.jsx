@@ -4,6 +4,65 @@ import ScoreBar from './ScoreBar';
 import ConfidencePill from './ConfidencePill';
 import { colors, getRiskColor } from '../config/colors';
 
+// ─── Derive up to 2 contextual explanation chips from route data ──────────────
+function getExplanationChips(route) {
+  const {
+    safetyScore = 50,
+    riskLevel = 'MODERATE',
+    confidenceFactors = {},
+    confidenceTags = [],
+    timeHour = 14,
+    factors = {},
+  } = route;
+
+  const chips = [];
+  const isNight = timeHour >= 20 || timeHour < 6;
+  const cautionPOI  = confidenceFactors.cautionPOI  ?? 0;
+  const safePOI     = confidenceFactors.safePOI     ?? 0;
+  const incidentVal = confidenceFactors.incident    ?? factors.crime ?? 0;
+  const emergency   = confidenceFactors.emergency   ?? 0;
+  const isolation   = confidenceFactors.isolation   ?? 0;
+  const crowd       = confidenceFactors.crowd       ?? 0;
+
+  // Priority 1 — caution zone at night
+  if (cautionPOI >= 2 && isNight) {
+    chips.push({ label: 'Nightlife-heavy area detected', type: 'caution', icon: '⚠' });
+  } else if (cautionPOI >= 3) {
+    chips.push({ label: 'Nightlife-heavy area detected', type: 'caution', icon: '⚠' });
+  }
+
+  // Priority 2 — incident exposure
+  if (incidentVal >= 20) {
+    chips.push({ label: 'Incident zone nearby', type: 'caution', icon: '⚠' });
+  }
+
+  // Priority 3 — positive signals (only if no caution chips yet or need 2nd)
+  if (chips.length < 2) {
+    if (safePOI >= 5 || confidenceTags.includes('Active commercial zone')) {
+      chips.push({ label: 'Well-monitored commercial corridor', type: 'safe', icon: '✦' });
+    } else if (emergency >= 50) {
+      chips.push({ label: 'High emergency accessibility', type: 'safe', icon: '✦' });
+    } else if (isolation < 20 && crowd >= 50) {
+      chips.push({ label: 'Lower isolation risk', type: 'safe', icon: '✦' });
+    } else if (safetyScore >= 65) {
+      chips.push({ label: 'Contextually safe corridor', type: 'safe', icon: '✦' });
+    }
+  }
+
+  // Priority 4 — fill second slot with a negative if still empty
+  if (chips.length < 2) {
+    if (isolation >= 40) {
+      chips.push({ label: 'Isolated stretches ahead', type: 'caution', icon: '⚠' });
+    } else if (isNight && safetyScore < 50) {
+      chips.push({ label: 'Late-night confidence reduced', type: 'caution', icon: '⚠' });
+    } else if (emergency >= 50 && chips.every(c => c.label !== 'High emergency accessibility')) {
+      chips.push({ label: 'High emergency accessibility', type: 'safe', icon: '✦' });
+    }
+  }
+
+  return chips.slice(0, 2);
+}
+
 export default function RouteCard({ route, onSeeWhy, onNavigate, onTimeImpact }) {
   const {
     label, emoji, duration, distance,
@@ -24,6 +83,8 @@ export default function RouteCard({ route, onSeeWhy, onNavigate, onTimeImpact })
     }, 500 / steps);
     return () => clearInterval(interval);
   }, [safetyScore]);
+
+  const explanationChips = getExplanationChips(route);
 
   return (
     <View style={[styles.card, isRecommended && styles.cardRecommended]}>
@@ -53,6 +114,28 @@ export default function RouteCard({ route, onSeeWhy, onNavigate, onTimeImpact })
       {/* Animated score bar */}
       <ScoreBar safetyScore={safetyScore} riskLevel={riskLevel} />
 
+      {/* ── Contextual explanation chips ── */}
+      {explanationChips.length > 0 && (
+        <View style={styles.chipRow}>
+          {explanationChips.map((chip, i) => {
+            const isCaution = chip.type === 'caution';
+            return (
+              <View
+                key={i}
+                style={[
+                  styles.chip,
+                  isCaution ? styles.chipCaution : styles.chipSafe,
+                ]}
+              >
+                <Text style={[styles.chipText, isCaution ? styles.chipTextCaution : styles.chipTextSafe]}>
+                  {chip.icon} {chip.label}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
       {/* Narrative preview */}
       <Text style={styles.narrative} numberOfLines={2}>{narrative}</Text>
 
@@ -63,9 +146,8 @@ export default function RouteCard({ route, onSeeWhy, onNavigate, onTimeImpact })
         ))}
       </View>
 
-      {/* ── Action buttons — always visible, never disappear ── */}
+      {/* ── Action buttons ── */}
       <View style={styles.actionsRow}>
-        {/* View Risk Details */}
         <TouchableOpacity
           style={styles.riskBtn}
           onPress={() => onSeeWhy(route)}
@@ -74,7 +156,6 @@ export default function RouteCard({ route, onSeeWhy, onNavigate, onTimeImpact })
           <Text style={styles.riskBtnText} numberOfLines={1}>See Why →</Text>
         </TouchableOpacity>
 
-        {/* Check Time Impact */}
         <TouchableOpacity
           style={styles.timeBtn}
           onPress={() => onTimeImpact && onTimeImpact(route)}
@@ -184,11 +265,41 @@ const styles = StyleSheet.create({
     lineHeight: 34,
   },
 
+  // ── Explanation chips ──
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+    marginBottom: 2,
+  },
+  chip: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  chipSafe: {
+    backgroundColor: '#EEF2FF',
+  },
+  chipCaution: {
+    backgroundColor: '#FFF7ED',
+  },
+  chipText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  chipTextSafe: {
+    color: '#3B5BDB',
+  },
+  chipTextCaution: {
+    color: '#92400E',
+  },
+
   narrative: {
     fontSize: 13,
     color: '#64748B',
     lineHeight: 18,
-    marginTop: 4,
+    marginTop: 8,
     marginBottom: 10,
   },
 
@@ -199,14 +310,12 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
 
-  /* ── Action buttons ── */
   actionsRow: {
     flexDirection: 'row',
     gap: 8,
     marginBottom: 8,
   },
 
-  /* View Risk Details button */
   riskBtn: {
     flex: 1,
     backgroundColor: '#FEE2E2',
@@ -221,7 +330,6 @@ const styles = StyleSheet.create({
     color: '#B91C1C',
   },
 
-  /* Check Time Impact button */
   timeBtn: {
     flex: 1,
     backgroundColor: '#FEF3C7',
@@ -236,27 +344,18 @@ const styles = StyleSheet.create({
     color: '#92400E',
   },
 
-  /* Navigate button — full width */
   navBtn: {
     borderRadius: 10,
     paddingVertical: 13,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  navBtnPrimary: {
-    backgroundColor: colors.brand,
-  },
-  navBtnSecondary: {
-    backgroundColor: '#EEF2FF',
-  },
+  navBtnPrimary:   { backgroundColor: colors.brand },
+  navBtnSecondary: { backgroundColor: '#EEF2FF' },
   navBtnText: {
     fontSize: 14,
     fontWeight: '700',
   },
-  navBtnTextPrimary: {
-    color: '#FFFFFF',
-  },
-  navBtnTextSecondary: {
-    color: colors.brand,
-  },
+  navBtnTextPrimary:   { color: '#FFFFFF' },
+  navBtnTextSecondary: { color: colors.brand },
 });
