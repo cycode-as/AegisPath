@@ -637,12 +637,12 @@ const styles = StyleSheet.create({
     borderColor: '#FFFFFF',
   },
 
-  /* Route info card — positioned above SOS button (64h + 32 bottom + 16 gap = 112) */
+  /* Route info card — vertically aligned with SOS button (bottom:32, SOS height:64) */
   routeInfoCard: {
     position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 128 : 112,
+    bottom: 32,                // same bottom as SOS button
     left: 16,
-    right: 88, // leave right gap so SOS button (right:20, w:64) is never covered
+    right: 100,                // SOS button: right:20 + width:64 + gap:16 = 100
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 14,
@@ -684,10 +684,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  /* Recenter button — above route info card */
+  /* Recenter button — above SOS button */
   recenterBtn: {
     position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 260 : 240,
+    bottom: 112,               // above SOS (32 + 64 + 16)
     right: 20,
     width: 44,
     height: 44,
@@ -706,7 +706,7 @@ const styles = StyleSheet.create({
   /* Police floating button — above recenter */
   policeBtn: {
     position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 316 : 296,
+    bottom: 168,               // 112 + 44 + 12
     right: 20,
     width: 44,
     height: 44,
