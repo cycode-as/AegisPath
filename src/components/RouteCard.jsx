@@ -71,7 +71,7 @@ export default function RouteCard({ route, onSeeWhy, onNavigate, onTimeImpact })
           onPress={() => onSeeWhy(route)}
           activeOpacity={0.75}
         >
-          <Text style={styles.riskBtnText} numberOfLines={1}>🔍 Risk Details</Text>
+          <Text style={styles.riskBtnText} numberOfLines={1}>See Why →</Text>
         </TouchableOpacity>
 
         {/* Check Time Impact */}

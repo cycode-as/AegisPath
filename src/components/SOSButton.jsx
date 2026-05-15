@@ -21,9 +21,9 @@ const styles = StyleSheet.create({
   button: {
     position: 'absolute',
     bottom: 32,
-    right: 20,
+    right: 24,
     backgroundColor: colors.highRisk,
-    borderRadius: 20,
+    borderRadius: 999,
     width: 64,
     height: 64,
     alignItems: 'center',
@@ -38,7 +38,7 @@ const styles = StyleSheet.create({
   label: {
     color: '#FFFFFF',
     fontWeight: '800',
-    fontSize: 11,
-    lineHeight: 13,
+    fontSize: 16,
+    lineHeight: 18,
   },
 });

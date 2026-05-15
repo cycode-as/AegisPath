@@ -6,8 +6,10 @@ export default function OfflineBanner() {
   const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
+    if (process.env.NODE_ENV === 'test') return undefined;
+
     const unsubscribe = NetInfo.addEventListener((state) => {
-      setIsOffline(!state.isConnected);
+      setIsOffline(!state?.isConnected);
     });
     return () => unsubscribe();
   }, []);

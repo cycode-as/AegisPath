@@ -192,7 +192,7 @@ export default function SOSScreen({ navigation }) {
     setTimeout(() => navigation.navigate('Home'), 2200);
   };
 
-  // ── Emotional closure — "Glad you're safe" ─────────────────────────────────
+  // ── Emotional closure — "Glad you're safe" ───────────────────────────────────
   if (safeConfirmed) {
     return (
       <View style={styles.closureContainer}>

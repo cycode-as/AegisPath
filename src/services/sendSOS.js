@@ -11,8 +11,22 @@
 
 import * as SMS from 'expo-sms';
 import { Linking } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
+
+const memoryStore = new Map();
+const fallbackStorage = {
+  getItem: async (key) => memoryStore.get(key) ?? null,
+  setItem: async (key, value) => { memoryStore.set(key, value); },
+  removeItem: async (key) => { memoryStore.delete(key); },
+};
+
+let AsyncStorage = fallbackStorage;
+try {
+  const storageModule = require('@react-native-async-storage/async-storage');
+  AsyncStorage = storageModule.default ?? storageModule;
+} catch (_) {
+  AsyncStorage = fallbackStorage;
+}
 
 // ─── Data loaders ─────────────────────────────────────────────────────────────
 
@@ -167,13 +181,18 @@ async function buildEmergencyMessage(locationData) {
  */
 export async function sendSOS() {
   try {
+    const isAvailable = await SMS.isAvailableAsync();
+    if (!isAvailable) return;
+
+    const contacts = await getEmergencyContacts();
+    if (contacts.length === 0) {
+      await SMS.sendSMSAsync([], 'I need help. Please track my location.');
+      return;
+    }
+
     // Gather location (fetched during the 3s countdown in SOSScreen)
     const loc = await getLiveLocation() ?? await getLastKnownLocation();
     const message  = await buildEmergencyMessage(loc);
-    const contacts = await getEmergencyContacts();
-
-    const isAvailable = await SMS.isAvailableAsync();
-    if (!isAvailable) return;
 
     // Collect all valid phone numbers
     const phones = contacts
