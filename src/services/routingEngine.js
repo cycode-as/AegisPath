@@ -167,37 +167,53 @@ export const getDynamicRoutes = async (start, end, timeMode = 'night', travelMod
 /**
  * Fetch a genuinely different alternative route for rerouting.
  *
- * Strategy:
- * 1. Fetch all OSRM alternatives from the current position
- * 2. Score each by a combined metric: safetyScore + geometric divergence from currentCoords
- * 3. Return the route that is MOST different from the current route geometry
- *    while still being reasonably safe
+ * Routes from the CURRENT dot position to destination.
+ * When OSRM returns only one route, injects a perpendicular waypoint
+ * to force a different path through the road network.
  *
- * This ensures rerouting always produces a visually distinct polyline.
- *
- * @param {{ lat: number, lon: number }} start - Current position
- * @param {{ lat: number, lon: number }} end - Destination
+ * @param {{ lat: number, lon: number }} start - Current dot position
+ * @param {{ lat: number, lon: number }} end   - Destination
  * @param {string} timeMode
  * @param {string} travelMode
- * @param {Array} currentCoords - [[lat,lon],...] of the route being replaced
+ * @param {Array}  currentCoords - [[lat,lon],...] of the route being replaced
  * @returns {Promise<{ routeCoords: Array, safetyScore: number, riskLevel: string } | null>}
  */
 export const getAlternativeRoute = async (start, end, timeMode, travelMode, currentCoords) => {
   if (!start?.lat || !start?.lon || !end?.lat || !end?.lon) return null;
 
-  const data = await fetchOSRMData(start.lat, start.lon, end.lat, end.lon, travelMode);
+  // Route from current position to destination
+  let data = await fetchOSRMData(start.lat, start.lon, end.lat, end.lon, travelMode);
 
   if (!data.routes || data.routes.length === 0) return null;
 
-  const enriched = await Promise.all(data.routes.map((r, i) => enrichRoute(r, i, timeMode)));
+  // If only one route returned, inject a perpendicular waypoint to force a different path.
+  // Offset ~400m perpendicular to the midpoint of the remaining route.
+  if (data.routes.length === 1 && currentCoords?.length >= 4) {
+    const mid  = currentCoords[Math.floor(currentCoords.length / 2)];
+    const prev = currentCoords[Math.max(0, Math.floor(currentCoords.length / 2) - 1)];
 
-  if (enriched.length === 1) {
-    // Only one route available — return it even if it's the same geometry
-    return enriched[0];
+    const dLat = mid[0] - prev[0];
+    const dLon = mid[1] - prev[1];
+    const len  = Math.sqrt(dLat * dLat + dLon * dLon) || 0.001;
+    const offsetScale = 0.004 / len; // ~400m
+    const wpLat = mid[0] + (-dLon * offsetScale);
+    const wpLon = mid[1] + ( dLat * offsetScale);
+
+    try {
+      const profile = PROFILE_MAP[travelMode] || 'car';
+      const waypointUrl = `https://router.project-osrm.org/route/v1/${profile}/${start.lon},${start.lat};${wpLon},${wpLat};${end.lon},${end.lat}?alternatives=true&geometries=geojson&overview=full`;
+      const wpRes = await fetch(waypointUrl, { headers: { 'User-Agent': 'AegisPath/1.0' } });
+      if (wpRes.ok) {
+        const wpData = await wpRes.json();
+        if (wpData.routes?.length > 0) data = wpData;
+      }
+    } catch (_) {}
   }
 
-  // Score each candidate by: divergence (70%) + safety (30%)
-  // This strongly prefers geometrically different routes
+  const enriched = await Promise.all(data.routes.map((r, i) => enrichRoute(r, i, timeMode)));
+
+  if (enriched.length === 1) return enriched[0];
+
   const scored = enriched.map(route => {
     const divergence = geometricDivergence(currentCoords, route.routeCoords);
     const safetyNorm = route.safetyScore / 100;
@@ -205,15 +221,10 @@ export const getAlternativeRoute = async (start, end, timeMode, travelMode, curr
     return { ...route, combinedScore, divergence };
   });
 
-  // Sort by combined score descending — most different + safe wins
   scored.sort((a, b) => b.combinedScore - a.combinedScore);
 
-  // Never return the same route if a different one exists
-  // If the top result has near-zero divergence and there's an alternative, skip it
   const best = scored[0];
-  if (best.divergence < 0.05 && scored.length > 1) {
-    return scored[1];
-  }
+  if (best.divergence < 0.05 && scored.length > 1) return scored[1];
 
   return best;
 };
