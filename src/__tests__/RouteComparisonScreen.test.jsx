@@ -168,15 +168,18 @@ describe('Property 5: RouteDetailSheet renders all route data fields', () => {
         // Set selectedRoute so RouteDetailSheet renders content
         useRouteStore.setState({ selectedRoute: route, routes: [], isLoading: false });
 
-        const { getByText, queryAllByTestId, unmount } = render(
+        const { getByText, queryAllByTestId, queryAllByText, unmount } = render(
           <RouteComparisonScreen navigation={mockNav} />
         );
 
         // 5.1 — route label (emoji + label.toUpperCase())
         expect(getByText(`${route.emoji} ${route.label.toUpperCase()}`)).toBeTruthy();
 
-        // 5.2 — safetyScore as a number string
-        expect(getByText(String(route.safetyScore))).toBeTruthy();
+        // 5.2 — safetyScore appears somewhere in the rendered output
+        // queryAllByText handles the case where score (e.g. "0") appears in
+        // multiple places (score badge, factor bar percentages, POI counts)
+        const scoreMatches = queryAllByText(String(route.safetyScore));
+        expect(scoreMatches.length).toBeGreaterThanOrEqual(1);
 
         // 5.4 — exactly badges.length ConfidencePill instances
         const pills = queryAllByTestId('confidence-pill');
