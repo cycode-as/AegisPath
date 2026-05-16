@@ -39,6 +39,8 @@ export const useRouteStore = create((set, get) => ({
     try {
       const data = await getDynamicRoutes(sourceCoords, destCoords, timeMode, travelMode);
       set({ routes: data, isLoading: false });
+      // Auto-select the highest Safety Confidence route
+      get().selectSafestRoute();
     } catch (e) {
       set({ error: e.message, isLoading: false });
     }
@@ -54,14 +56,25 @@ export const useRouteStore = create((set, get) => ({
     try {
       const data = await getDynamicRoutes(sourceCoords, destCoords, mode, travelMode);
       set({ routes: data, isLoading: false });
+      // Auto-select the highest Safety Confidence route after time mode change
+      get().selectSafestRoute();
     } catch (e) {
       set({ error: e.message, isLoading: false });
     }
   },
 
-  setSelectedRoute: (route) => set({ 
-    selectedRoute: route, 
+  setSelectedRoute: (route) => set({
+    selectedRoute: route,
     routeCoords: route?.routeCoords || null,
   }),
+
+  // Always selects the highest Safety Confidence route from the current routes array.
+  // Called automatically after fetchRoutes completes.
+  selectSafestRoute: () => {
+    const { routes } = get();
+    if (!routes || routes.length === 0) return;
+    const safest = [...routes].sort((a, b) => b.safetyScore - a.safetyScore)[0];
+    set({ selectedRoute: safest, routeCoords: safest?.routeCoords || null });
+  },
   setSosActive: (value) => set({ sosActive: value }),
 }));

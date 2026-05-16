@@ -682,6 +682,7 @@ export default function RouteComparisonScreen({ navigation }) {
   };
 
   const handleNavigate = (route) => {
+    // Always set the selected route — engine guarantees routes[0] is safest
     setSelectedRoute(route);
     navigation.navigate('Navigation');
   };
@@ -690,7 +691,8 @@ export default function RouteComparisonScreen({ navigation }) {
     navigation.navigate('TimeImpact', { route });
   };
 
-  const sorted = [...routes].sort((a) => (a.isRecommended ? -1 : 1));
+  // Sort by safetyScore descending — highest confidence always shown first
+  const sorted = [...routes].sort((a, b) => b.safetyScore - a.safetyScore);
 
   return (
     <GestureHandlerRootView style={s.root}>

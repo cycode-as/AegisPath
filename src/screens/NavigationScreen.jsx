@@ -39,6 +39,10 @@ function getPolylineColor(riskLevel) {
   return '#EF4444';
 }
 
+// Fixed route colors — green = safer, red = alternative (regardless of risk level)
+const PRIMARY_ROUTE_COLOR   = '#16A34A'; // strong green
+const SECONDARY_ROUTE_COLOR = '#DC2626'; // strong red
+
 function getRegionForCoords(coords) {
   if (!coords || coords.length === 0) {
     return { latitude: 28.6139, longitude: 77.2090, latitudeDelta: 0.05, longitudeDelta: 0.05 };
@@ -59,6 +63,7 @@ function getRegionForCoords(coords) {
 
 export default function NavigationScreen({ navigation }) {
   const {
+    routes,
     selectedRoute,
     routeCoords: storeCoords,
     source, destination, destCoords,
@@ -73,6 +78,12 @@ export default function NavigationScreen({ navigation }) {
   // Used as `key` on Polyline/Markers to force full remount.
   const [routeVersion,   setRouteVersion]   = useState(0);
   const [arrived,        setArrived]        = useState(false);
+
+  // ── Dual-route selection phase ──────────────────────────────────────────────
+  // phase: 'comparing' → show both routes + overlay
+  //        'selecting'  → overlay says "Selecting safer route…"
+  //        'navigating' → both routes still visible, dot animation running
+  const [selectionPhase, setSelectionPhase] = useState('comparing');
 
   const [alertVisible,   setAlertVisible]   = useState(false);
   const [rerouteVisible, setRerouteVisible] = useState(false);
@@ -125,8 +136,9 @@ export default function NavigationScreen({ navigation }) {
   const currentZone = selectedRoute
     ? { name: selectedRoute.label, safetyScore: selectedRoute.safetyScore, riskLevel: selectedRoute.riskLevel }
     : { name: 'Route', safetyScore: 50, riskLevel: 'MODERATE' };
-  const zoneColor     = getRiskColor(currentZone.riskLevel);
-  const polylineColor = getPolylineColor(currentZone.riskLevel);
+  // Safety bar always green — we're navigating the safest route
+  const zoneColor     = PRIMARY_ROUTE_COLOR;
+  const polylineColor = PRIMARY_ROUTE_COLOR; // kept for any legacy references
 
   // ── Shake-to-SOS ────────────────────────────────────────────────────────────
   const { shakeDetected, countdown, cancelShakeSOS } = useShakeToSOS(() => {
@@ -139,8 +151,10 @@ export default function NavigationScreen({ navigation }) {
   // ── Dot animation interval ──────────────────────────────────────────────────
   // Re-runs whenever ROUTE_COORDS changes (i.e. after reroute).
   // Reads coords length from activeCoordsRef — never stale.
+  // Does NOT start until selectionPhase === 'navigating'.
   useEffect(() => {
     if (!ROUTE_COORDS || ROUTE_COORDS.length === 0) return;
+    if (selectionPhase !== 'navigating') return;
 
     // Kill any existing interval immediately
     if (intervalRef.current) {
@@ -174,7 +188,7 @@ export default function NavigationScreen({ navigation }) {
         intervalRef.current = null;
       }
     };
-  }, [ROUTE_COORDS]); // restarts on every coord change
+  }, [ROUTE_COORDS, selectionPhase]); // restarts on every coord change or phase transition
 
   // ── Camera follows dot ──────────────────────────────────────────────────────
   // Depends on dotIndex AND routeVersion so it fires immediately after reroute
@@ -215,6 +229,20 @@ export default function NavigationScreen({ navigation }) {
       finally { if (!cancelled && isMounted.current) setPoliceLoading(false); }
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  // ── Dual-route selection sequence — runs once on mount ─────────────────────
+  // Phase 1 (0–2.5s):  'comparing'  — both routes visible, overlay shows comparison
+  // Phase 2 (2.5–4s):  'selecting'  — overlay says "Selecting safer route…"
+  // Phase 3 (4s+):     'navigating' — secondary fades, dot animation starts
+  useEffect(() => {
+    if (!routes || routes.length < 2) {
+      setSelectionPhase('navigating');
+      return;
+    }
+    const t1 = setTimeout(() => setSelectionPhase('selecting'), 2500);
+    const t2 = setTimeout(() => setSelectionPhase('navigating'), 4000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
   }, []);
 
   // ── Zone alert / reroute modal timers ───────────────────────────────────────
@@ -544,18 +572,90 @@ export default function NavigationScreen({ navigation }) {
         toolbarEnabled={false}
         mapType="standard"
       >
-        {/* key={routeVersion} forces full unmount+remount of polyline on reroute,
-            guaranteeing the old polyline disappears and the new one renders fresh */}
+        {/* ── Primary (safest) route — thick green, active ── */}
         {polylineCoords.length > 0 && (
           <Polyline
             key={`polyline-${routeVersion}`}
             coordinates={polylineCoords}
-            strokeColor={polylineColor}
-            strokeWidth={5}
+            strokeColor={PRIMARY_ROUTE_COLOR}
+            strokeWidth={8}
             lineCap="round"
             lineJoin="round"
           />
         )}
+
+        {/* ── Secondary (lower-confidence) route — ALWAYS visible, red/thinner ── */}
+        {(() => {
+          const sortedForMap = routes ? [...routes].sort((a, b) => b.safetyScore - a.safetyScore) : [];
+          const secondaryRoute = sortedForMap.find(r => r.id !== selectedRoute?.id && r.routeCoords?.length > 1)
+            ?? sortedForMap[1];
+          if (!secondaryRoute) return null;
+          const secCoords = secondaryRoute.routeCoords.map(([lat, lon]) => ({ latitude: lat, longitude: lon }));
+          const isNavigating = selectionPhase === 'navigating';
+          return (
+            <Polyline
+              key={`secondary-${routeVersion}`}
+              coordinates={secCoords}
+              strokeColor={isNavigating ? '#F87171' : SECONDARY_ROUTE_COLOR}
+              strokeWidth={isNavigating ? 4 : 5}
+              strokePattern={[12, 6]}
+              lineCap="round"
+              lineJoin="round"
+            />
+          );
+        })()}
+
+        {/* ── Primary route midpoint label marker ── */}
+        {(() => {
+          if (!ROUTE_COORDS || ROUTE_COORDS.length < 2) return null;
+          const midIdx = Math.floor(ROUTE_COORDS.length * 0.35);
+          const [lat, lon] = ROUTE_COORDS[midIdx];
+          const tag = (selectedRoute?.confidenceTags ?? [])[0];
+          return (
+            <Marker
+              key={`label-primary-${routeVersion}`}
+              coordinate={{ latitude: lat, longitude: lon }}
+              anchor={{ x: 0.5, y: 1.0 }}
+              tracksViewChanges={false}
+            >
+              <View style={styles.routeLabelBubble}>
+                <Text style={styles.routeLabelTitle}>✅ {selectedRoute?.duration ?? ''}</Text>
+                <Text style={styles.routeLabelSub}>Confidence {selectedRoute?.safetyScore ?? '—'}</Text>
+                {tag ? <Text style={styles.routeLabelTag} numberOfLines={1}>✦ {tag}</Text> : null}
+              </View>
+            </Marker>
+          );
+        })()}
+
+        {/* ── Secondary route midpoint label marker ── */}
+        {(() => {
+          const sortedForLabel = routes ? [...routes].sort((a, b) => b.safetyScore - a.safetyScore) : [];
+          const secRoute = sortedForLabel.find(r => r.id !== selectedRoute?.id && r.routeCoords?.length > 1)
+            ?? sortedForLabel[1];
+          if (!secRoute || !secRoute.routeCoords) return null;
+          const midIdx = Math.floor(secRoute.routeCoords.length * 0.35);
+          const [lat, lon] = secRoute.routeCoords[midIdx];
+          // ETA difference
+          const primaryMin = parseInt(selectedRoute?.duration) || 0;
+          const secMin     = parseInt(secRoute.duration) || 0;
+          const diff       = secMin - primaryMin;
+          const diffStr    = diff > 0 ? `+${diff} min` : diff < 0 ? `${diff} min` : 'same';
+          const tag = (secRoute.confidenceTags ?? [])[0];
+          return (
+            <Marker
+              key={`label-secondary-${routeVersion}`}
+              coordinate={{ latitude: lat, longitude: lon }}
+              anchor={{ x: 0.5, y: 1.0 }}
+              tracksViewChanges={false}
+            >
+              <View style={styles.routeLabelBubbleAlt}>
+                <Text style={styles.routeLabelTitleAlt}>📍 {secRoute.duration ?? ''} · {diffStr}</Text>
+                <Text style={styles.routeLabelSubAlt}>Confidence {secRoute.safetyScore ?? '—'}</Text>
+                {tag ? <Text style={styles.routeLabelTagAlt} numberOfLines={1}>⚠ {tag}</Text> : null}
+              </View>
+            </Marker>
+          );
+        })()}
 
         {startCoord && (
           <Marker key={`start-${routeVersion}`} coordinate={startCoord} anchor={{ x: 0.5, y: 0.5 }}>
@@ -581,6 +681,95 @@ export default function NavigationScreen({ navigation }) {
           </Marker>
         )}
       </MapView>
+
+      {/* ── Route selection overlay — only during comparing/selecting phases ── */}
+      {selectionPhase !== 'navigating' && (() => {
+        const sortedRoutes = routes ? [...routes].sort((a, b) => b.safetyScore - a.safetyScore) : [];
+        const saferRoute  = sortedRoutes[0] ?? selectedRoute;
+        const otherRoute  = sortedRoutes[1];
+        const isSelecting = selectionPhase === 'selecting';
+        const saferTags   = (saferRoute?.confidenceTags ?? []).slice(0, 2);
+        const otherTags   = (otherRoute?.confidenceTags  ?? []).slice(0, 2);
+        return (
+          <View style={styles.selectionOverlay} pointerEvents="none">
+            <View style={styles.selectionCard}>
+              <View style={styles.selectionHeader}>
+                <View style={styles.selectionDot} />
+                <Text style={styles.selectionHeaderText}>
+                  {isSelecting ? 'SELECTING SAFER ROUTE…' : 'ROUTE ANALYSIS'}
+                </Text>
+              </View>
+              {isSelecting ? (
+                <View style={styles.selectingRow}>
+                  <ActivityIndicator size="small" color={colors.brand} />
+                  <Text style={styles.selectingText}>Activating higher Safety Confidence route</Text>
+                </View>
+              ) : (
+                <View style={styles.routeCompareRow}>
+                  <View style={[styles.routeCompareCard, styles.routeCompareCardSafe]}>
+                    <Text style={styles.routeCompareLabel}>✅ SAFER</Text>
+                    <Text style={[styles.routeCompareScore, { color: getRiskColor(saferRoute?.riskLevel ?? 'LOW') }]}>
+                      {saferRoute?.safetyScore ?? '—'}
+                    </Text>
+                    <Text style={styles.routeCompareSub}>{saferRoute?.duration ?? ''}</Text>
+                    {saferTags.map((tag, i) => (
+                      <View key={i} style={styles.routeCompareTag}>
+                        <Text style={styles.routeCompareTagText} numberOfLines={1}>✦ {tag}</Text>
+                      </View>
+                    ))}
+                  </View>
+                  <View style={styles.routeCompareVs}>
+                    <Text style={styles.routeCompareVsText}>VS</Text>
+                  </View>
+                  <View style={[styles.routeCompareCard, styles.routeCompareCardOther]}>
+                    <Text style={styles.routeCompareLabelOther}>📍 ALT</Text>
+                    <Text style={[styles.routeCompareScore, { color: getRiskColor(otherRoute?.riskLevel ?? 'MODERATE') }]}>
+                      {otherRoute?.safetyScore ?? '—'}
+                    </Text>
+                    <Text style={styles.routeCompareSub}>{otherRoute?.duration ?? ''}</Text>
+                    {otherTags.map((tag, i) => (
+                      <View key={i} style={[styles.routeCompareTag, styles.routeCompareTagOther]}>
+                        <Text style={[styles.routeCompareTagText, { color: '#92400E' }]} numberOfLines={1}>⚠ {tag}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+            </View>
+          </View>
+        );
+      })()}
+
+      {/* ── Persistent bottom comparison strip — always visible during navigation ── */}
+      {selectionPhase === 'navigating' && (() => {
+        const sortedBottom = routes ? [...routes].sort((a, b) => b.safetyScore - a.safetyScore) : [];
+        const primary   = sortedBottom[0] ?? selectedRoute;
+        const secondary = sortedBottom[1];
+        if (!secondary) return null;
+        const primaryMin  = parseInt(primary?.duration)   || 0;
+        const secondaryMin = parseInt(secondary?.duration) || 0;
+        const diff = secondaryMin - primaryMin;
+        const diffStr = diff > 0 ? `+${diff} min` : diff < 0 ? `${diff} min` : 'same ETA';
+        const secTag = (secondary.confidenceTags ?? [])[0];
+        return (
+          <View style={styles.bottomCompareStrip} pointerEvents="none">
+            {/* Primary pill */}
+            <View style={styles.bottomComparePrimary}>
+              <Text style={styles.bottomComparePrimaryLabel}>✅ Recommended</Text>
+              <Text style={styles.bottomComparePrimaryETA}>{primary?.duration ?? '—'}</Text>
+              <Text style={styles.bottomComparePrimaryScore}>Confidence {primary?.safetyScore ?? '—'}</Text>
+            </View>
+            <View style={styles.bottomCompareDivider} />
+            {/* Secondary pill */}
+            <View style={styles.bottomCompareSecondary}>
+              <Text style={styles.bottomCompareSecondaryLabel}>📍 Alternative</Text>
+              <Text style={styles.bottomCompareSecondaryETA}>{secondary?.duration ?? '—'} · {diffStr}</Text>
+              <Text style={styles.bottomCompareSecondaryScore}>Confidence {secondary?.safetyScore ?? '—'}</Text>
+              {secTag ? <Text style={styles.bottomCompareSecondaryTag} numberOfLines={1}>⚠ {secTag}</Text> : null}
+            </View>
+          </View>
+        );
+      })()}
 
       {/* Floating SOS */}
       <SOSButton
@@ -1049,6 +1238,274 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+
+  // ── Map route label bubbles ─────────────────────────────────────────────────
+  routeLabelBubble: {
+    backgroundColor: 'rgba(15,23,42,0.92)',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1.5,
+    borderColor: '#22C55E',
+    minWidth: 110,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  routeLabelTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#4ADE80',
+  },
+  routeLabelSub: {
+    fontSize: 10,
+    color: '#94A3B8',
+    fontWeight: '500',
+    marginTop: 1,
+  },
+  routeLabelTag: {
+    fontSize: 9,
+    color: '#4ADE80',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  routeLabelBubbleAlt: {
+    backgroundColor: 'rgba(15,23,42,0.82)',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#475569',
+    minWidth: 110,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  routeLabelTitleAlt: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#94A3B8',
+  },
+  routeLabelSubAlt: {
+    fontSize: 10,
+    color: '#64748B',
+    fontWeight: '500',
+    marginTop: 1,
+  },
+  routeLabelTagAlt: {
+    fontSize: 9,
+    color: '#F59E0B',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+
+  // ── Persistent bottom comparison strip ─────────────────────────────────────
+  // Sits above the route info card, below the floating alerts, never covers SOS
+  bottomCompareStrip: {
+    position: 'absolute',
+    bottom: 148,          // above routeInfoCard (32 + ~80 + 36 gap)
+    left: 16,
+    right: 100,           // avoids SOS button
+    backgroundColor: 'rgba(15,23,42,0.90)',
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  bottomComparePrimary: {
+    flex: 1,
+  },
+  bottomComparePrimaryLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#4ADE80',
+    letterSpacing: 0.3,
+    marginBottom: 2,
+  },
+  bottomComparePrimaryETA: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginBottom: 1,
+  },
+  bottomComparePrimaryScore: {
+    fontSize: 10,
+    color: '#94A3B8',
+    fontWeight: '500',
+  },
+  bottomCompareDivider: {
+    width: 1,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    marginHorizontal: 10,
+  },
+  bottomCompareSecondary: {
+    flex: 1,
+  },
+  bottomCompareSecondaryLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#64748B',
+    letterSpacing: 0.3,
+    marginBottom: 2,
+  },
+  bottomCompareSecondaryETA: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#94A3B8',
+    marginBottom: 1,
+  },
+  bottomCompareSecondaryScore: {
+    fontSize: 10,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  bottomCompareSecondaryTag: {
+    fontSize: 9,
+    color: '#F59E0B',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+
+  // ── Route selection overlay ─────────────────────────────────────────────────
+  selectionOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    zIndex: 10,
+  },
+  selectionCard: {
+    backgroundColor: 'rgba(15,23,42,0.92)',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  selectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  selectionDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.brand,
+  },
+  selectionHeaderText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 1,
+  },
+
+  // Selecting phase
+  selectingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 4,
+  },
+  selectingText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    flex: 1,
+  },
+
+  // Comparing phase — side by side cards
+  routeCompareRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 8,
+  },
+  routeCompareCard: {
+    flex: 1,
+    borderRadius: 12,
+    padding: 10,
+    gap: 4,
+  },
+  routeCompareCardSafe: {
+    backgroundColor: 'rgba(34,197,94,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(34,197,94,0.3)',
+  },
+  routeCompareCardOther: {
+    backgroundColor: 'rgba(100,116,139,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(100,116,139,0.25)',
+  },
+  routeCompareLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#4ADE80',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  routeCompareLabelOther: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  routeCompareScore: {
+    fontSize: 28,
+    fontWeight: '900',
+    lineHeight: 32,
+  },
+  routeCompareSub: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  routeCompareTag: {
+    backgroundColor: 'rgba(34,197,94,0.15)',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
+  routeCompareTagOther: {
+    backgroundColor: 'rgba(251,191,36,0.12)',
+  },
+  routeCompareTagText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#4ADE80',
+  },
+  routeCompareVs: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 28,
+  },
+  routeCompareVsText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#475569',
   },
 
   // ── Arrival screen ──────────────────────────────────────────────────────────
