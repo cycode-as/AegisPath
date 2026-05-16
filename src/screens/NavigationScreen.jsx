@@ -17,6 +17,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   Modal,
+  StatusBar,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -71,6 +72,7 @@ export default function NavigationScreen({ navigation }) {
   // routeVersion increments on every successful reroute.
   // Used as `key` on Polyline/Markers to force full remount.
   const [routeVersion,   setRouteVersion]   = useState(0);
+  const [arrived,        setArrived]        = useState(false);
 
   const [alertVisible,   setAlertVisible]   = useState(false);
   const [rerouteVisible, setRerouteVisible] = useState(false);
@@ -153,7 +155,16 @@ export default function NavigationScreen({ navigation }) {
       if (!coords || coords.length === 0) return;
       setDotIndex(prev => {
         const next = prev + stepSize;
-        return next >= coords.length ? coords.length - 1 : next;
+        if (next >= coords.length - 1) {
+          // Reached destination — stop interval and trigger arrival
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+          setTimeout(() => {
+            if (isMounted.current) setArrived(true);
+          }, 600); // small delay so camera settles on destination first
+          return coords.length - 1;
+        }
+        return next;
       });
     }, 800);
 
@@ -398,6 +409,74 @@ export default function NavigationScreen({ navigation }) {
   const endCoord = ROUTE_COORDS?.length > 1
     ? { latitude: ROUTE_COORDS[ROUTE_COORDS.length - 1][0], longitude: ROUTE_COORDS[ROUTE_COORDS.length - 1][1] }
     : null;
+
+  // ── Arrival screen ──────────────────────────────────────────────────────────
+  if (arrived) {
+    const score = selectedRoute?.safetyScore ?? 50;
+    const riskLvl = selectedRoute?.riskLevel ?? 'MODERATE';
+    const scoreColor = getRiskColor(riskLvl);
+    return (
+      <View style={styles.arrivalContainer}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F0FFF4" />
+
+        {/* Success checkmark */}
+        <View style={styles.arrivalCheckCircle}>
+          <Text style={styles.arrivalCheckEmoji}>✓</Text>
+        </View>
+
+        <Text style={styles.arrivalTitle}>You've arrived safely.</Text>
+        <Text style={styles.arrivalSub}>
+          {destination ? `${destination.split(',')[0]}` : 'Destination reached'}
+        </Text>
+
+        {/* Trip summary card */}
+        <View style={styles.arrivalCard}>
+          <Text style={styles.arrivalCardLabel}>TRIP SUMMARY</Text>
+
+          <View style={styles.arrivalRow}>
+            <Text style={styles.arrivalRowIcon}>🛡</Text>
+            <Text style={styles.arrivalRowText}>Safety Confidence</Text>
+            <Text style={[styles.arrivalRowValue, { color: scoreColor }]}>{score}/100</Text>
+          </View>
+
+          <View style={[styles.arrivalRow, styles.arrivalRowBorder]}>
+            <Text style={styles.arrivalRowIcon}>🕐</Text>
+            <Text style={styles.arrivalRowText}>Duration</Text>
+            <Text style={styles.arrivalRowValue}>{selectedRoute?.duration ?? '—'}</Text>
+          </View>
+
+          <View style={[styles.arrivalRow, styles.arrivalRowBorder]}>
+            <Text style={styles.arrivalRowIcon}>📏</Text>
+            <Text style={styles.arrivalRowText}>Distance</Text>
+            <Text style={styles.arrivalRowValue}>{selectedRoute?.distance ?? '—'}</Text>
+          </View>
+
+          <View style={[styles.arrivalRow, styles.arrivalRowBorder]}>
+            <Text style={styles.arrivalRowIcon}>✅</Text>
+            <Text style={styles.arrivalRowText}>Route type</Text>
+            <Text style={styles.arrivalRowValue}>{selectedRoute?.label ?? 'Route'}</Text>
+          </View>
+        </View>
+
+        {/* CTA */}
+        <TouchableOpacity
+          style={styles.arrivalHomeBtn}
+          onPress={() => navigation.navigate('Home')}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.arrivalHomeBtnText}>Back to Home →</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.arrivalReportBtn}
+          onPress={() => navigation.navigate('IncidentReport')}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.arrivalReportBtnText}>⚠ Report an incident on this route</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   // ── No route guard ──────────────────────────────────────────────────────────
   if (!ROUTE_COORDS) {
@@ -970,5 +1049,116 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+
+  // ── Arrival screen ──────────────────────────────────────────────────────────
+  arrivalContainer: {
+    flex: 1,
+    backgroundColor: '#F0FFF4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+    paddingBottom: 32,
+  },
+  arrivalCheckCircle: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: '#22C55E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
+    shadowColor: '#22C55E',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  arrivalCheckEmoji: {
+    fontSize: 48,
+    color: '#FFFFFF',
+    fontWeight: '300',
+  },
+  arrivalTitle: {
+    fontSize: 26,
+    fontWeight: '900',
+    color: '#0F172A',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  arrivalSub: {
+    fontSize: 15,
+    color: '#64748B',
+    textAlign: 'center',
+    marginBottom: 28,
+    fontWeight: '500',
+  },
+  arrivalCard: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 18,
+    marginBottom: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.07,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  arrivalCardLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 1,
+    marginBottom: 14,
+  },
+  arrivalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 11,
+    gap: 12,
+  },
+  arrivalRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  arrivalRowIcon: { fontSize: 18, width: 26, textAlign: 'center' },
+  arrivalRowText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  arrivalRowValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  arrivalHomeBtn: {
+    width: '100%',
+    backgroundColor: colors.brand,
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginBottom: 12,
+    shadowColor: colors.brand,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  arrivalHomeBtnText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  arrivalReportBtn: {
+    paddingVertical: 10,
+  },
+  arrivalReportBtnText: {
+    fontSize: 13,
+    color: '#92400E',
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });
